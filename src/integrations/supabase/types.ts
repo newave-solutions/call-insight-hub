@@ -14,7 +14,60 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      call_logs: {
+        Row: {
+          agreement_length_months: number | null
+          category: string
+          coupon: string | null
+          coupon_value: string | null
+          created_at: string
+          customer_name: string | null
+          id: string
+          key_points: Json | null
+          price_per_service: number | null
+          raw_notes: string
+          sentiment: string | null
+          service_name: string | null
+          summary: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          agreement_length_months?: number | null
+          category: string
+          coupon?: string | null
+          coupon_value?: string | null
+          created_at?: string
+          customer_name?: string | null
+          id?: string
+          key_points?: Json | null
+          price_per_service?: number | null
+          raw_notes: string
+          sentiment?: string | null
+          service_name?: string | null
+          summary?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          agreement_length_months?: number | null
+          category?: string
+          coupon?: string | null
+          coupon_value?: string | null
+          created_at?: string
+          customer_name?: string | null
+          id?: string
+          key_points?: Json | null
+          price_per_service?: number | null
+          raw_notes?: string
+          sentiment?: string | null
+          service_name?: string | null
+          summary?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
