@@ -7,12 +7,16 @@ import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 const AnalysisSchema = z.object({
   category: z.enum(["saved", "closed", "resign", "other"]),
   customer_name: z.string().nullable(),
+  customer_id: z.string().nullable(),
   summary: z.string(),
   agreement_length_months: z.number().nullable(),
   price_per_service: z.number().nullable(),
   service_name: z.string().nullable(),
   coupon: z.string().nullable(),
   coupon_value: z.string().nullable(),
+  coupon_amount: z.number().nullable(),
+  follow_up_needed: z.boolean(),
+  follow_up_notes: z.string().nullable(),
   sentiment: z.string().nullable(),
   key_points: z.array(z.string()),
 });
@@ -34,11 +38,15 @@ Categorize the call into exactly one of:
 
 Extract, when discussed:
 - customer_name (person or account name, null if unknown)
+- customer_id (external account/customer ID or number mentioned in the notes, null if none)
 - agreement_length_months (integer months; convert "1 year"=12, "2 years"=24)
 - price_per_service (monthly/service price as a number; null if not stated)
 - service_name (plan/service name)
-- coupon (coupon code or promo name if discussed, null otherwise)
-- coupon_value (e.g. "20% off", "$10/mo for 6 months")
+- coupon (coupon code or promo name if discussed, null otherwise). In this business a "coupon" is a discount/credit applied on the Field Routes platform toward a future service.
+- coupon_value (human-readable form, e.g. "50% off next service", "$25 credit")
+- coupon_amount (the discount as a dollar NUMBER the rep will enter on Field Routes. If the notes say "50% off next regular service" and price_per_service is 120, coupon_amount = 60. If "$25 off", coupon_amount = 25. Null if not computable.)
+- follow_up_needed (true if the notes indicate a callback, action item, or unresolved issue)
+- follow_up_notes (short description of what to follow up on, null if none)
 - sentiment (short: "positive"/"neutral"/"negative"/"frustrated"/"happy")
 - summary (2-3 sentence summary)
 - key_points (array of 3-6 short bullet points highlighting what mattered)
@@ -64,12 +72,16 @@ export const analyzeAndSaveCallLog = createServerFn({ method: "POST" })
         raw_notes: data.notes,
         category: output.category,
         customer_name: output.customer_name,
+        customer_id: output.customer_id,
         summary: output.summary,
         agreement_length_months: output.agreement_length_months,
         price_per_service: output.price_per_service,
         service_name: output.service_name,
         coupon: output.coupon,
         coupon_value: output.coupon_value,
+        coupon_amount: output.coupon_amount,
+        follow_up_needed: output.follow_up_needed,
+        follow_up_notes: output.follow_up_notes,
         sentiment: output.sentiment,
         key_points: output.key_points,
       })

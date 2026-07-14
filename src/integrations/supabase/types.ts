@@ -19,9 +19,13 @@ export type Database = {
           agreement_length_months: number | null
           category: string
           coupon: string | null
+          coupon_amount: number | null
           coupon_value: string | null
           created_at: string
+          customer_id: string | null
           customer_name: string | null
+          follow_up_needed: boolean
+          follow_up_notes: string | null
           id: string
           key_points: Json | null
           price_per_service: number | null
@@ -36,9 +40,13 @@ export type Database = {
           agreement_length_months?: number | null
           category: string
           coupon?: string | null
+          coupon_amount?: number | null
           coupon_value?: string | null
           created_at?: string
+          customer_id?: string | null
           customer_name?: string | null
+          follow_up_needed?: boolean
+          follow_up_notes?: string | null
           id?: string
           key_points?: Json | null
           price_per_service?: number | null
@@ -53,9 +61,13 @@ export type Database = {
           agreement_length_months?: number | null
           category?: string
           coupon?: string | null
+          coupon_amount?: number | null
           coupon_value?: string | null
           created_at?: string
+          customer_id?: string | null
           customer_name?: string | null
+          follow_up_needed?: boolean
+          follow_up_notes?: string | null
           id?: string
           key_points?: Json | null
           price_per_service?: number | null

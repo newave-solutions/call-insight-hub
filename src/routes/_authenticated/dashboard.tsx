@@ -12,15 +12,41 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Input } from "@/components/ui/input";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { toast } from "sonner";
 import {
   ArrowUp,
   Ban,
+  BellRing,
+  CalendarClock,
   DollarSign,
   FileSignature,
   LogOut,
   MessageSquare,
   PhoneCall,
+  Search,
   Shield,
   Sparkles,
   Ticket,
@@ -40,11 +66,14 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 
 type Category = "saved" | "closed" | "resign" | "other";
 
-const CATEGORY_META: Record<Category, { label: string; icon: typeof Shield; color: string; ring: string }> = {
-  saved: { label: "Saved", icon: Shield, color: "text-emerald-600 bg-emerald-500/10", ring: "ring-emerald-500/20" },
-  closed: { label: "Closed", icon: Ban, color: "text-rose-600 bg-rose-500/10", ring: "ring-rose-500/20" },
-  resign: { label: "Resign", icon: FileSignature, color: "text-blue-600 bg-blue-500/10", ring: "ring-blue-500/20" },
-  other: { label: "Other", icon: MessageSquare, color: "text-muted-foreground bg-muted", ring: "ring-border" },
+const CATEGORY_META: Record<
+  Category,
+  { label: string; icon: typeof Shield; color: string; dot: string; hex: string }
+> = {
+  saved: { label: "Saved", icon: Shield, color: "text-emerald-600 bg-emerald-500/10", dot: "bg-emerald-500", hex: "#10b981" },
+  closed: { label: "Closed", icon: Ban, color: "text-rose-600 bg-rose-500/10", dot: "bg-rose-500", hex: "#f43f5e" },
+  resign: { label: "Resign", icon: FileSignature, color: "text-blue-600 bg-blue-500/10", dot: "bg-blue-500", hex: "#3b82f6" },
+  other: { label: "Other", icon: MessageSquare, color: "text-muted-foreground bg-muted", dot: "bg-muted-foreground/60", hex: "#94a3b8" },
 };
 
 function Dashboard() {
@@ -57,6 +86,7 @@ function Dashboard() {
 
   const [notes, setNotes] = useState("");
   const [filter, setFilter] = useState<Category | "all">("all");
+  const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -67,6 +97,7 @@ function Dashboard() {
   const { data: logs = [] } = useQuery({
     queryKey: ["call_logs"],
     queryFn: () => listFn(),
+    refetchInterval: 15000,
   });
 
   const analyzeMut = useMutation({
@@ -97,19 +128,98 @@ function Dashboard() {
     staleTime: 60_000,
   });
 
-  const totals = useMemo(() => {
-    const t = { saved: 0, closed: 0, resign: 0, other: 0, revenue: 0, couponsUsed: 0 };
+  const stats = useMemo(() => {
+    const t = {
+      saved: 0,
+      closed: 0,
+      resign: 0,
+      other: 0,
+      revenue: 0,
+      couponsUsed: 0,
+      couponTotal: 0,
+      followUps: 0,
+      agreementSum: 0,
+      agreementCount: 0,
+    };
     for (const l of logs) {
       t[l.category as Category] += 1;
       if (l.category === "resign" && l.price_per_service && l.agreement_length_months) {
         t.revenue += Number(l.price_per_service) * l.agreement_length_months;
       }
-      if (l.coupon) t.couponsUsed += 1;
+      if (l.agreement_length_months) {
+        t.agreementSum += l.agreement_length_months;
+        t.agreementCount += 1;
+      }
+      if (l.coupon || l.coupon_amount) t.couponsUsed += 1;
+      if (l.coupon_amount) t.couponTotal += Number(l.coupon_amount);
+      if (l.follow_up_needed) t.followUps += 1;
     }
     return t;
   }, [logs]);
 
-  const filtered = filter === "all" ? logs : logs.filter((l) => l.category === filter);
+  const saveRate = logs.length
+    ? Math.round((stats.saved / Math.max(1, stats.saved + stats.closed)) * 100)
+    : 0;
+  const avgAgreement = stats.agreementCount
+    ? Math.round((stats.agreementSum / stats.agreementCount) * 10) / 10
+    : 0;
+
+  const categoryPie = useMemo(
+    () =>
+      (["saved", "closed", "resign", "other"] as Category[])
+        .map((c) => ({ name: CATEGORY_META[c].label, value: stats[c], key: c, fill: CATEGORY_META[c].hex }))
+        .filter((d) => d.value > 0),
+    [stats],
+  );
+
+  const timeseries = useMemo(() => {
+    // last 14 days
+    const days: { day: string; date: string; saved: number; closed: number; resign: number; coupons: number }[] = [];
+    const map = new Map<string, (typeof days)[number]>();
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      const entry = {
+        day: d.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+        date: key,
+        saved: 0,
+        closed: 0,
+        resign: 0,
+        coupons: 0,
+      };
+      days.push(entry);
+      map.set(key, entry);
+    }
+    for (const l of logs) {
+      const key = new Date(l.created_at).toISOString().slice(0, 10);
+      const e = map.get(key);
+      if (!e) continue;
+      if (l.category === "saved") e.saved += 1;
+      else if (l.category === "closed") e.closed += 1;
+      else if (l.category === "resign") e.resign += 1;
+      if (l.coupon_amount) e.coupons += Number(l.coupon_amount);
+      else if (l.coupon) e.coupons += 1;
+    }
+    return days;
+  }, [logs]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return logs.filter((l) => {
+      if (filter !== "all" && l.category !== filter) return false;
+      if (!q) return true;
+      return (
+        (l.customer_name ?? "").toLowerCase().includes(q) ||
+        (l.customer_id ?? "").toLowerCase().includes(q) ||
+        (l.summary ?? "").toLowerCase().includes(q) ||
+        (l.service_name ?? "").toLowerCase().includes(q) ||
+        (l.coupon ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [logs, filter, query]);
+
   const selected = logs.find((l) => l.id === selectedId) ?? null;
 
   async function handleSignOut() {
@@ -131,69 +241,76 @@ function Dashboard() {
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <PhoneCall className="h-4 w-4" />
+        <div className="mx-auto grid max-w-[1400px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-2.5 sm:px-6">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground">
+              <PhoneCall className="h-3.5 w-3.5" />
             </div>
-            <span className="font-semibold tracking-tight">CallInsight</span>
+            <span className="truncate text-sm font-semibold tracking-tight">CallInsight</span>
+            <span className="ml-2 hidden text-xs text-muted-foreground sm:inline">
+              Retention command center
+            </span>
           </div>
-          <Button variant="ghost" size="sm" onClick={handleSignOut}>
-            <LogOut className="mr-2 h-4 w-4" /> Sign out
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="hidden items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground sm:inline-flex">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> live
+            </span>
+            <Button variant="ghost" size="sm" onClick={handleSignOut}>
+              <LogOut className="h-4 w-4 sm:mr-1.5" />
+              <span className="hidden sm:inline">Sign out</span>
+            </Button>
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-6 py-8">
-        {/* Stat grid */}
-        <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <StatCard
+      <main className="mx-auto max-w-[1400px] px-4 py-4 sm:px-6">
+        {/* KPI strip */}
+        <section className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-7">
+          <Kpi
             active={filter === "saved"}
             onClick={() => setFilter(filter === "saved" ? "all" : "saved")}
             meta={CATEGORY_META.saved}
-            value={totals.saved}
-            label="Saved from cancel"
+            value={stats.saved}
+            label="Saved"
           />
-          <StatCard
+          <Kpi
             active={filter === "closed"}
             onClick={() => setFilter(filter === "closed" ? "all" : "closed")}
             meta={CATEGORY_META.closed}
-            value={totals.closed}
-            label="Accounts closed"
+            value={stats.closed}
+            label="Closed"
           />
-          <StatCard
+          <Kpi
             active={filter === "resign"}
             onClick={() => setFilter(filter === "resign" ? "all" : "resign")}
             meta={CATEGORY_META.resign}
-            value={totals.resign}
-            label="New resigns"
+            value={stats.resign}
+            label="Resigns"
           />
-          <StatCard
+          <Kpi
             active={filter === "other"}
             onClick={() => setFilter(filter === "other" ? "all" : "other")}
             meta={CATEGORY_META.other}
-            value={totals.other}
+            value={stats.other}
             label="Other"
           />
-        </section>
-
-        <section className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <MiniStat icon={DollarSign} label="Committed revenue (resigns)" value={`$${totals.revenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} />
-          <MiniStat icon={Ticket} label="Coupons discussed" value={totals.couponsUsed.toString()} />
-          <MiniStat icon={PhoneCall} label="Total calls logged" value={logs.length.toString()} />
-          <MiniStat
-            icon={FileSignature}
-            label="Save rate"
-            value={logs.length ? `${Math.round((totals.saved / Math.max(1, totals.saved + totals.closed)) * 100)}%` : "—"}
+          <MiniKpi icon={FileSignature} label="Save rate" value={logs.length ? `${saveRate}%` : "—"} />
+          <MiniKpi icon={CalendarClock} label="Avg agreement" value={avgAgreement ? `${avgAgreement} mo` : "—"} />
+          <MiniKpi
+            icon={DollarSign}
+            label="Resign revenue"
+            value={`$${stats.revenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
           />
         </section>
 
-        {/* Composer */}
-        <section className="mt-8">
-          <div className="rounded-2xl border bg-card p-4 shadow-sm ring-1 ring-black/5">
-            <div className="mb-2 flex items-center justify-between">
-              <label className="text-sm font-medium">Log a new call</label>
-              <span className="text-xs text-muted-foreground">AI will categorize and extract details</span>
+        {/* Composer + charts */}
+        <section className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+          <div className="rounded-xl border bg-card p-3 shadow-sm">
+            <div className="mb-1.5 flex items-center justify-between">
+              <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <Sparkles className="h-3.5 w-3.5 text-primary" /> Log a call
+              </label>
+              <span className="text-[10px] text-muted-foreground">AI categorizes + extracts</span>
             </div>
             <div className="relative">
               <Textarea
@@ -203,77 +320,163 @@ function Dashboard() {
                 onKeyDown={(e) => {
                   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submit();
                 }}
-                placeholder="Paste your call summary here... e.g. 'Customer wanted to cancel their Pro plan. Offered 20% off for 6 months. Agreed to stay 12 more months at $49/mo with coupon SAVE20.'"
-                className="min-h-[140px] resize-none rounded-xl border-none bg-transparent pr-14 text-sm shadow-none focus-visible:ring-0"
+                placeholder="Paste call notes… e.g. 'Jane Doe #A-2201 wanted to cancel. Offered 50% off next regular service ($60 credit). Signed new 12mo agreement at $120/service.'"
+                className="min-h-[120px] resize-none rounded-lg border bg-background pr-12 text-sm"
               />
               <Button
                 size="icon"
                 onClick={submit}
                 disabled={analyzeMut.isPending || notes.trim().length < 5}
-                className="absolute bottom-2 right-2 h-10 w-10 rounded-xl"
+                className="absolute bottom-2 right-2 h-8 w-8 rounded-lg"
               >
-                {analyzeMut.isPending ? (
-                  <Sparkles className="h-4 w-4 animate-pulse" />
-                ) : (
-                  <ArrowUp className="h-4 w-4" />
-                )}
+                {analyzeMut.isPending ? <Sparkles className="h-4 w-4 animate-pulse" /> : <ArrowUp className="h-4 w-4" />}
               </Button>
             </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              Tip: press ⌘/Ctrl + Enter to submit
-            </p>
+            <p className="mt-1.5 text-[10px] text-muted-foreground">⌘/Ctrl + Enter to submit</p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <ChartCard title="Outcomes (14d)">
+              <ResponsiveContainer width="100%" height={140}>
+                <BarChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
+                  <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
+                  <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
+                  <Tooltip contentStyle={{ fontSize: 11 }} />
+                  <Bar dataKey="saved" stackId="a" fill={CATEGORY_META.saved.hex} radius={[0, 0, 0, 0]} />
+                  <Bar dataKey="resign" stackId="a" fill={CATEGORY_META.resign.hex} />
+                  <Bar dataKey="closed" stackId="a" fill={CATEGORY_META.closed.hex} radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+              <Legend items={[["Saved", CATEGORY_META.saved.hex], ["Resign", CATEGORY_META.resign.hex], ["Closed", CATEGORY_META.closed.hex]]} />
+            </ChartCard>
+
+            <ChartCard title="Category mix">
+              {categoryPie.length === 0 ? (
+                <EmptyChart />
+              ) : (
+                <>
+                  <ResponsiveContainer width="100%" height={140}>
+                    <PieChart>
+                      <Pie data={categoryPie} dataKey="value" innerRadius={34} outerRadius={58} paddingAngle={2} stroke="none">
+                        {categoryPie.map((d) => (
+                          <Cell key={d.key} fill={d.fill} />
+                        ))}
+                      </Pie>
+                      <Tooltip contentStyle={{ fontSize: 11 }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <Legend items={categoryPie.map((d) => [d.name, d.fill])} />
+                </>
+              )}
+            </ChartCard>
+
+            <ChartCard title="Discount $ / day (14d)">
+              <ResponsiveContainer width="100%" height={140}>
+                <LineChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
+                  <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
+                  <YAxis tick={{ fontSize: 10 }} width={28} />
+                  <Tooltip contentStyle={{ fontSize: 11 }} />
+                  <Line type="monotone" dataKey="coupons" stroke="#a855f7" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+              <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
+                <span className="flex items-center gap-1.5"><Ticket className="h-3 w-3" /> Coupons used: {stats.couponsUsed}</span>
+                <span>Total: ${stats.couponTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+              </div>
+            </ChartCard>
+
+            <ChartCard title="Follow-ups">
+              <div className="flex h-[140px] flex-col items-center justify-center gap-1">
+                <BellRing className="h-5 w-5 text-amber-500" />
+                <div className="text-3xl font-semibold tabular-nums">{stats.followUps}</div>
+                <div className="text-[11px] text-muted-foreground">calls need follow-up</div>
+              </div>
+            </ChartCard>
           </div>
         </section>
 
-        {/* Two-column: list + insights */}
-        <section className="mt-8 grid gap-6 lg:grid-cols-[1fr_360px]">
-          <div>
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                {filter === "all" ? "All calls" : CATEGORY_META[filter].label}
-                <span className="ml-2 text-muted-foreground/60">{filtered.length}</span>
+        {/* Table + insights */}
+        <section className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="rounded-xl border bg-card shadow-sm">
+            <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
+              <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Call log
+                <span className="ml-1.5 text-muted-foreground/60">{filtered.length}</span>
               </h2>
-              {filter !== "all" && (
-                <button className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setFilter("all")}>
-                  Clear filter
-                </button>
-              )}
+              <div className="flex flex-1 items-center gap-2">
+                <div className="relative ml-auto w-full max-w-[220px]">
+                  <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search customer, ID, service…"
+                    className="h-8 pl-7 text-xs"
+                  />
+                </div>
+                {(filter !== "all" || query) && (
+                  <button
+                    className="text-[11px] text-muted-foreground hover:text-foreground"
+                    onClick={() => {
+                      setFilter("all");
+                      setQuery("");
+                    }}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
             </div>
 
             {filtered.length === 0 ? (
-              <div className="rounded-2xl border border-dashed p-10 text-center text-sm text-muted-foreground">
-                No calls yet. Paste a summary above to get started.
+              <div className="p-8 text-center text-xs text-muted-foreground">
+                No calls match. Paste a summary above to log one.
               </div>
             ) : (
-              <ul className="space-y-2">
-                {filtered.map((l) => (
-                  <CallCard
-                    key={l.id}
-                    log={l}
-                    onSelect={() => setSelectedId(l.id)}
-                    onDelete={() => deleteMut.mutate(l.id)}
-                  />
-                ))}
-              </ul>
+              <div className="max-h-[560px] overflow-auto">
+                <Table>
+                  <TableHeader className="sticky top-0 z-[1] bg-card">
+                    <TableRow className="text-[10px] uppercase">
+                      <TableHead className="h-8">Customer</TableHead>
+                      <TableHead className="h-8">ID</TableHead>
+                      <TableHead className="h-8">Result</TableHead>
+                      <TableHead className="h-8">Details</TableHead>
+                      <TableHead className="h-8">Coupon</TableHead>
+                      <TableHead className="h-8">Follow-up</TableHead>
+                      <TableHead className="h-8 text-right">When</TableHead>
+                      <TableHead className="h-8 w-8"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.map((l) => (
+                      <LogRow
+                        key={l.id}
+                        log={l}
+                        onSelect={() => setSelectedId(l.id)}
+                        onDelete={() => deleteMut.mutate(l.id)}
+                      />
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </div>
 
-          <aside className="space-y-4">
-            <div className="rounded-2xl border bg-card p-5 shadow-sm">
-              <div className="mb-3 flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-primary" />
-                <h3 className="text-sm font-semibold">AI insights</h3>
-              </div>
-              {logs.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Log at least one call to see insights.</p>
-              ) : insightsQuery.isLoading ? (
-                <p className="text-sm text-muted-foreground">Analyzing your data…</p>
-              ) : (
-                <div className="prose prose-sm max-w-none whitespace-pre-wrap text-sm text-foreground/90">
-                  {insightsQuery.data?.insights}
-                </div>
-              )}
+          <aside className="rounded-xl border bg-card p-3 shadow-sm">
+            <div className="mb-2 flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 text-primary" />
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI insights</h3>
             </div>
+            {logs.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Log at least one call to see insights.</p>
+            ) : insightsQuery.isLoading ? (
+              <p className="text-xs text-muted-foreground">Analyzing…</p>
+            ) : (
+              <div className="prose prose-sm max-w-none whitespace-pre-wrap text-[12.5px] leading-relaxed text-foreground/90">
+                {insightsQuery.data?.insights}
+              </div>
+            )}
           </aside>
         </section>
       </main>
@@ -283,7 +486,7 @@ function Dashboard() {
   );
 }
 
-function StatCard({
+function Kpi({
   meta,
   value,
   label,
@@ -301,93 +504,136 @@ function StatCard({
     <button
       onClick={onClick}
       className={cn(
-        "group flex flex-col items-start gap-3 rounded-2xl border bg-card p-4 text-left shadow-sm transition-all hover:shadow-md",
+        "group flex items-center gap-2.5 rounded-lg border bg-card p-2.5 text-left shadow-sm transition-all hover:border-foreground/25",
         active && "ring-2 ring-primary",
       )}
     >
-      <div className={cn("flex h-9 w-9 items-center justify-center rounded-lg", meta.color)}>
+      <div className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-md", meta.color)}>
         <Icon className="h-4 w-4" />
       </div>
-      <div>
-        <div className="text-3xl font-semibold tabular-nums tracking-tight">{value}</div>
-        <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="min-w-0">
+        <div className="text-xl font-semibold tabular-nums leading-none">{value}</div>
+        <div className="mt-1 truncate text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
       </div>
     </button>
   );
 }
 
-function MiniStat({ icon: Icon, label, value }: { icon: typeof DollarSign; label: string; value: string }) {
+function MiniKpi({ icon: Icon, label, value }: { icon: typeof DollarSign; label: string; value: string }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border bg-card/60 px-4 py-3">
-      <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted text-muted-foreground">
+    <div className="flex items-center gap-2.5 rounded-lg border bg-card p-2.5 shadow-sm">
+      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
         <Icon className="h-4 w-4" />
       </div>
       <div className="min-w-0">
-        <div className="truncate text-xs text-muted-foreground">{label}</div>
-        <div className="text-lg font-semibold tabular-nums">{value}</div>
+        <div className="truncate text-base font-semibold tabular-nums leading-none">{value}</div>
+        <div className="mt-1 truncate text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
       </div>
+    </div>
+  );
+}
+
+function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border bg-card p-3 shadow-sm">
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function Legend({ items }: { items: [string, string][] }) {
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+      {items.map(([name, color]) => (
+        <span key={name} className="flex items-center gap-1">
+          <span className="h-2 w-2 rounded-sm" style={{ background: color }} />
+          {name}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function EmptyChart() {
+  return (
+    <div className="flex h-[140px] items-center justify-center text-[11px] text-muted-foreground">
+      No data yet
     </div>
   );
 }
 
 type Log = Awaited<ReturnType<typeof listCallLogs>>[number];
 
-function CallCard({ log, onSelect, onDelete }: { log: Log; onSelect: () => void; onDelete: () => void }) {
+function LogRow({ log, onSelect, onDelete }: { log: Log; onSelect: () => void; onDelete: () => void }) {
   const meta = CATEGORY_META[log.category as Category];
-  const Icon = meta.icon;
+  const details =
+    log.category === "resign"
+      ? [
+          log.service_name,
+          log.price_per_service != null ? `$${log.price_per_service}/svc` : null,
+          log.agreement_length_months != null ? `${log.agreement_length_months}mo` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ")
+      : log.summary;
   return (
-    <li>
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={onSelect}
-        onKeyDown={(e) => (e.key === "Enter" ? onSelect() : null)}
-        className="group flex cursor-pointer items-start gap-3 rounded-xl border bg-card p-4 shadow-sm transition-all hover:shadow-md hover:border-foreground/20"
-      >
-        <div className={cn("mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg", meta.color)}>
-          <Icon className="h-4 w-4" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium">
-              {log.customer_name || "Unnamed customer"}
+    <TableRow onClick={onSelect} className="cursor-pointer text-xs">
+      <TableCell className="max-w-[160px] py-2 font-medium">
+        <div className="truncate">{log.customer_name || "—"}</div>
+      </TableCell>
+      <TableCell className="py-2 font-mono text-[11px] text-muted-foreground">
+        {log.customer_id || "—"}
+      </TableCell>
+      <TableCell className="py-2">
+        <span className={cn("inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[10px] font-medium uppercase", meta.color)}>
+          <span className={cn("h-1.5 w-1.5 rounded-full", meta.dot)} />
+          {meta.label}
+        </span>
+      </TableCell>
+      <TableCell className="max-w-[280px] py-2 text-muted-foreground">
+        <div className="line-clamp-1">{details || "—"}</div>
+      </TableCell>
+      <TableCell className="py-2">
+        {log.coupon_amount || log.coupon || log.coupon_value ? (
+          <div className="flex flex-col leading-tight">
+            <span className="font-medium">
+              {log.coupon_amount != null ? `$${Number(log.coupon_amount).toFixed(0)}` : log.coupon_value || log.coupon}
             </span>
-            <Badge variant="secondary" className="text-[10px] uppercase">
-              {meta.label}
-            </Badge>
-            {log.coupon && (
-              <Badge variant="outline" className="gap-1 text-[10px]">
-                <Ticket className="h-3 w-3" />
-                {log.coupon}
-              </Badge>
+            {log.coupon && log.coupon_amount != null && (
+              <span className="text-[10px] text-muted-foreground">{log.coupon}</span>
             )}
           </div>
-          <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{log.summary}</p>
-          {log.category === "resign" && (log.price_per_service || log.agreement_length_months) && (
-            <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
-              {log.price_per_service != null && <span>💵 ${log.price_per_service}/svc</span>}
-              {log.agreement_length_months != null && <span>📅 {log.agreement_length_months} mo</span>}
-              {log.service_name && <span>📦 {log.service_name}</span>}
-            </div>
-          )}
-        </div>
-        <div className="flex flex-col items-end gap-2 opacity-0 transition-opacity group-hover:opacity-100">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-            aria-label="Delete"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-          <span className="text-[10px] text-muted-foreground">
-            {new Date(log.created_at).toLocaleDateString()}
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </TableCell>
+      <TableCell className="max-w-[180px] py-2">
+        {log.follow_up_needed ? (
+          <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+            <BellRing className="h-3 w-3" />
+            <span className="line-clamp-1">{log.follow_up_notes || "Follow up"}</span>
           </span>
-        </div>
-      </div>
-    </li>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </TableCell>
+      <TableCell className="py-2 text-right text-[10px] text-muted-foreground">
+        {new Date(log.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+      </TableCell>
+      <TableCell className="py-2">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="rounded-md p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+          aria-label="Delete"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -410,6 +656,7 @@ function DetailDrawer({ log, onClose, onDelete }: { log: Log; onClose: () => voi
               <h2 className="text-lg font-semibold">{log.customer_name || "Unnamed customer"}</h2>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Badge variant="secondary">{meta.label}</Badge>
+                {log.customer_id && <span className="font-mono">#{log.customer_id}</span>}
                 <span>{new Date(log.created_at).toLocaleString()}</span>
               </div>
             </div>
@@ -437,12 +684,29 @@ function DetailDrawer({ log, onClose, onDelete }: { log: Log; onClose: () => voi
             </Section>
           )}
 
-          {(log.coupon || log.coupon_value) && (
-            <Section title="Coupon">
-              <div className="flex items-center gap-2 text-sm">
+          {(log.coupon || log.coupon_value || log.coupon_amount != null) && (
+            <Section title="Coupon / discount">
+              <div className="flex flex-wrap items-center gap-3 text-sm">
                 <Ticket className="h-4 w-4 text-muted-foreground" />
+                {log.coupon_amount != null && (
+                  <span className="rounded-md bg-primary/10 px-2 py-0.5 font-semibold text-primary">
+                    ${Number(log.coupon_amount).toFixed(2)} credit
+                  </span>
+                )}
                 {log.coupon && <span className="font-medium">{log.coupon}</span>}
                 {log.coupon_value && <span className="text-muted-foreground">— {log.coupon_value}</span>}
+              </div>
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Enter this amount on Field Routes as a credit toward the customer's next service.
+              </p>
+            </Section>
+          )}
+
+          {log.follow_up_needed && (
+            <Section title="Follow-up">
+              <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-200">
+                <BellRing className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{log.follow_up_notes || "Follow-up needed."}</span>
               </div>
             </Section>
           )}
