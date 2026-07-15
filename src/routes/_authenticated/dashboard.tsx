@@ -803,7 +803,20 @@ function DetailDrawer({ log, onClose, onDelete }: { log: Log; onClose: () => voi
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Badge variant="secondary">{meta.label}</Badge>
                 {log.customer_id && <span className="font-mono">#{log.customer_id}</span>}
-                <span>{new Date(log.created_at).toLocaleString()}</span>
+                <span>
+                  {new Date(log.call_date ?? log.created_at).toLocaleDateString(undefined, {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                  {log.date_source === "auto" && (
+                    <span className="ml-1 text-[10px] uppercase tracking-wide text-muted-foreground/70">(added)</span>
+                  )}
+                  {log.date_source === "detected" && (
+                    <span className="ml-1 text-[10px] uppercase tracking-wide text-emerald-600">(from notes)</span>
+                  )}
+                </span>
               </div>
             </div>
           </div>
