@@ -231,7 +231,7 @@ function Dashboard() {
       map.set(key, entry);
     }
     for (const l of logs) {
-      const key = new Date(l.created_at).toISOString().slice(0, 10);
+      const key = new Date(l.call_date ?? l.created_at).toISOString().slice(0, 10);
       const e = map.get(key);
       if (!e) continue;
       if (l.category === "saved") e.saved += 1;
