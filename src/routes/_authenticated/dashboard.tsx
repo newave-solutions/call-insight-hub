@@ -273,7 +273,7 @@ function Dashboard() {
       toast.error("Paste some call notes first");
       return;
     }
-    analyzeMut.mutate(trimmed);
+    analyzeMut.mutate({ notes: trimmed, callDate: callDate.toISOString() });
   }
 
   return (
