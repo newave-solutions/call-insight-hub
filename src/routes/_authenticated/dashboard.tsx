@@ -103,11 +103,15 @@ function Dashboard() {
   const del = useServerFn(deleteCallLog);
   const listFn = useServerFn(listCallLogs);
   const insightsFn = useServerFn(generateInsights);
+  const bulkImportFn = useServerFn(bulkImportCallLogs);
 
   const [notes, setNotes] = useState("");
   const [filter, setFilter] = useState<Category | "all">("all");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [callDate, setCallDate] = useState<Date>(new Date());
+  const [dateOpen, setDateOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -121,15 +125,28 @@ function Dashboard() {
   });
 
   const analyzeMut = useMutation({
-    mutationFn: (n: string) => analyze({ data: { notes: n } }),
+    mutationFn: (input: { notes: string; callDate: string }) =>
+      analyze({ data: { notes: input.notes, callDate: input.callDate } }),
     onSuccess: () => {
       setNotes("");
+      setCallDate(new Date());
       qc.invalidateQueries({ queryKey: ["call_logs"] });
       qc.invalidateQueries({ queryKey: ["insights"] });
       toast.success("Call analyzed and logged");
       textareaRef.current?.focus();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to analyze"),
+  });
+
+  const bulkMut = useMutation({
+    mutationFn: (items: ParsedEntry[]) => bulkImportFn({ data: { items } }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["call_logs"] });
+      qc.invalidateQueries({ queryKey: ["insights"] });
+      toast.success(`Imported ${res.inserted} call${res.inserted === 1 ? "" : "s"}`);
+      setUploadOpen(false);
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Import failed"),
   });
 
   const deleteMut = useMutation({
