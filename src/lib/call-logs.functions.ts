@@ -1,31 +1,38 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { generateText, Output } from "ai";
+import { generateObject, generateText, NoObjectGeneratedError } from "ai";
 import { z } from "zod";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 
+// Every field is nullish + defaulted so a slightly-off model response
+// still parses instead of throwing AI_NoObjectGeneratedError.
 const AnalysisSchema = z.object({
-  category: z.enum(["saved", "closed", "resign", "other"]),
-  customer_name: z.string().nullable(),
-  customer_id: z.string().nullable(),
-  summary: z.string(),
-  agreement_length_months: z.number().nullable(),
-  price_per_service: z.number().nullable(),
-  service_name: z.string().nullable(),
-  coupon: z.string().nullable(),
-  coupon_value: z.string().nullable(),
-  coupon_amount: z.number().nullable(),
-  follow_up_needed: z.boolean(),
-  follow_up_notes: z.string().nullable(),
-  sentiment: z.string().nullable(),
-  key_points: z.array(z.string()),
+  category: z
+    .enum(["saved", "closed", "resign", "lead", "other"])
+    .default("other"),
+  customer_name: z.string().nullish().default(null),
+  customer_id: z.string().nullish().default(null),
+  summary: z.string().nullish().default(""),
+  agreement_length_months: z.number().nullish().default(null),
+  price_per_service: z.number().nullish().default(null),
+  service_name: z.string().nullish().default(null),
+  coupon: z.string().nullish().default(null),
+  coupon_value: z.string().nullish().default(null),
+  coupon_amount: z.number().nullish().default(null),
+  follow_up_needed: z.boolean().nullish().default(false),
+  follow_up_notes: z.string().nullish().default(null),
+  sentiment: z.string().nullish().default(null),
+  key_points: z.array(z.string()).nullish().default([]),
 });
+
+type Analysis = z.infer<typeof AnalysisSchema>;
 
 function getModel() {
   const key = process.env.LOVABLE_API_KEY;
   if (!key) throw new Error("Missing LOVABLE_API_KEY");
   const gateway = createLovableAiGatewayProvider(key);
-  return gateway("google/gemini-3-flash-preview");
+  // Flash-lite is the fastest current Gemini tier for structured extraction.
+  return gateway("google/gemini-2.5-flash-lite");
 }
 
 const SYSTEM_PROMPT = `You are an assistant that reads customer service / retention call notes and extracts structured data.
@@ -34,6 +41,7 @@ Categorize the call into exactly one of:
 - "saved": customer was going to cancel but was retained / saved from cancellation.
 - "closed": account or subscription was closed / canceled.
 - "resign": customer signed a new agreement or renewed with new terms.
+- "lead": call was forwarded/sent to Inside Sales for more information on a new subscription, upsell, or new service (a sales lead).
 - "other": none of the above (general inquiry, complaint, info call, etc.).
 
 Extract, when discussed:
@@ -44,26 +52,42 @@ Extract, when discussed:
 - service_name (plan/service name)
 - coupon (coupon code or promo name if discussed, null otherwise). In this business a "coupon" is a discount/credit applied on the Field Routes platform toward a future service.
 - coupon_value (human-readable form, e.g. "50% off next service", "$25 credit")
-- coupon_amount (the discount as a dollar NUMBER the rep will enter on Field Routes. If the notes say "50% off next regular service" and price_per_service is 120, coupon_amount = 60. If "$25 off", coupon_amount = 25. Null if not computable.)
-- follow_up_needed (true if the notes indicate a callback, action item, or unresolved issue)
+- coupon_amount (the discount as a dollar NUMBER the rep will enter on Field Routes. If the notes say "50% off next regular service" and price_per_service is 120, coupon_amount = 60. If "$25 off", coupon_amount = 25. If no coupon/discount was discussed, return 0.)
+- follow_up_needed (true only if the notes indicate a callback, action item, or unresolved issue; otherwise false)
 - follow_up_notes (short description of what to follow up on, null if none)
 - sentiment (short: "positive"/"neutral"/"negative"/"frustrated"/"happy")
 - summary (2-3 sentence summary)
 - key_points (array of 3-6 short bullet points highlighting what mattered)
 
-Return null for fields not clearly present in the notes. Do not invent values.`;
+CRITICAL: Return a JSON object that exactly matches the schema. Use null for text fields not present in the notes; use 0 for coupon_amount when there is no discount; use false for follow_up_needed when nothing needs to be followed up. Do not invent values.`;
 
 export const analyzeAndSaveCallLog = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ notes: z.string().min(3) }).parse(input))
   .handler(async ({ data, context }) => {
     const model = getModel();
-    const { output } = await generateText({
-      model,
-      output: Output.object({ schema: AnalysisSchema }),
-      system: SYSTEM_PROMPT,
-      prompt: `Call notes:\n\n${data.notes}`,
-    });
+
+    let output: Analysis;
+    try {
+      const res = await generateObject({
+        model,
+        schema: AnalysisSchema,
+        system: SYSTEM_PROMPT,
+        prompt: `Call notes:\n\n${data.notes}`,
+      });
+      output = res.object;
+    } catch (err) {
+      // Fallback: salvage whatever JSON the model produced, then parse
+      // with our lenient schema so we never crash the request.
+      if (NoObjectGeneratedError.isInstance(err)) {
+        const raw = (err as { text?: string }).text ?? "";
+        const match = raw.match(/\{[\s\S]*\}/);
+        const parsed = match ? safeJson(match[0]) : null;
+        output = AnalysisSchema.parse(parsed ?? {});
+      } else {
+        throw err;
+      }
+    }
 
     const { data: row, error } = await context.supabase
       .from("call_logs")
@@ -80,7 +104,7 @@ export const analyzeAndSaveCallLog = createServerFn({ method: "POST" })
         coupon: output.coupon,
         coupon_value: output.coupon_value,
         coupon_amount: output.coupon_amount,
-        follow_up_needed: output.follow_up_needed,
+        follow_up_needed: output.follow_up_needed ?? false,
         follow_up_notes: output.follow_up_notes,
         sentiment: output.sentiment,
         key_points: output.key_points,
@@ -91,6 +115,14 @@ export const analyzeAndSaveCallLog = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return row;
   });
+
+function safeJson(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
 
 export const listCallLogs = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -129,7 +161,7 @@ export const generateInsights = createServerFn({ method: "POST" })
     const { text } = await generateText({
       model,
       system:
-        "You are a retention analyst. Given a list of call log summaries, produce concise, actionable insights in markdown. Include: overall trends, patterns in saves vs closes vs resigns, common reasons customers cancel, what's working to save them, coupon effectiveness, and 3 concrete recommendations. Be specific and reference numbers where possible. Keep it under 400 words.",
+        "You are a retention analyst. Given a list of call log summaries, produce concise, actionable insights formatted as GitHub-flavored MARKDOWN. Use `##` section headings, `**bold**` for key terms, `-` bullet lists, and short paragraphs. Include: overall trends, patterns in saves vs closes vs resigns vs leads, common reasons customers cancel, what's working to save them, coupon effectiveness, lead pipeline volume, and 3 concrete recommendations. Be specific and reference numbers where possible. Keep it under 400 words. Do not wrap the whole reply in a code fence.",
       prompt: `Here are the last ${logs.length} calls as JSON:\n\n${JSON.stringify(logs, null, 2)}`,
     });
 

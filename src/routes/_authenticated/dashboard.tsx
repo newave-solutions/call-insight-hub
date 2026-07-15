@@ -50,9 +50,12 @@ import {
   Shield,
   Sparkles,
   Ticket,
+  TrendingUp,
   Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   component: Dashboard,
@@ -64,7 +67,7 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
   }),
 });
 
-type Category = "saved" | "closed" | "resign" | "other";
+type Category = "saved" | "closed" | "resign" | "lead" | "other";
 
 const CATEGORY_META: Record<
   Category,
@@ -73,6 +76,7 @@ const CATEGORY_META: Record<
   saved: { label: "Saved", icon: Shield, color: "text-emerald-600 bg-emerald-500/10", dot: "bg-emerald-500", hex: "#10b981" },
   closed: { label: "Closed", icon: Ban, color: "text-rose-600 bg-rose-500/10", dot: "bg-rose-500", hex: "#f43f5e" },
   resign: { label: "Resign", icon: FileSignature, color: "text-blue-600 bg-blue-500/10", dot: "bg-blue-500", hex: "#3b82f6" },
+  lead: { label: "Lead", icon: TrendingUp, color: "text-amber-600 bg-amber-500/10", dot: "bg-amber-500", hex: "#f59e0b" },
   other: { label: "Other", icon: MessageSquare, color: "text-muted-foreground bg-muted", dot: "bg-muted-foreground/60", hex: "#94a3b8" },
 };
 
@@ -133,6 +137,7 @@ function Dashboard() {
       saved: 0,
       closed: 0,
       resign: 0,
+      lead: 0,
       other: 0,
       revenue: 0,
       couponsUsed: 0,
@@ -166,7 +171,7 @@ function Dashboard() {
 
   const categoryPie = useMemo(
     () =>
-      (["saved", "closed", "resign", "other"] as Category[])
+      (["saved", "closed", "resign", "lead", "other"] as Category[])
         .map((c) => ({ name: CATEGORY_META[c].label, value: stats[c], key: c, fill: CATEGORY_META[c].hex }))
         .filter((d) => d.value > 0),
     [stats],
@@ -265,7 +270,7 @@ function Dashboard() {
 
       <main className="mx-auto max-w-[1400px] px-4 py-4 sm:px-6">
         {/* KPI strip */}
-        <section className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-7">
+        <section className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
           <Kpi
             active={filter === "saved"}
             onClick={() => setFilter(filter === "saved" ? "all" : "saved")}
@@ -286,6 +291,13 @@ function Dashboard() {
             meta={CATEGORY_META.resign}
             value={stats.resign}
             label="Resigns"
+          />
+          <Kpi
+            active={filter === "lead"}
+            onClick={() => setFilter(filter === "lead" ? "all" : "lead")}
+            meta={CATEGORY_META.lead}
+            value={stats.lead}
+            label="Leads"
           />
           <Kpi
             active={filter === "other"}
@@ -473,8 +485,10 @@ function Dashboard() {
             ) : insightsQuery.isLoading ? (
               <p className="text-xs text-muted-foreground">Analyzing…</p>
             ) : (
-              <div className="prose prose-sm max-w-none whitespace-pre-wrap text-[12.5px] leading-relaxed text-foreground/90">
-                {insightsQuery.data?.insights}
+              <div className="max-w-none text-[12.5px] leading-relaxed text-foreground/90 [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:uppercase [&_h2]:tracking-wide [&_h2]:text-muted-foreground [&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-xs [&_h3]:font-semibold [&_p]:my-1.5 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:my-0.5 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[11px] [&_a]:text-primary [&_a]:underline">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {insightsQuery.data?.insights ?? ""}
+                </ReactMarkdown>
               </div>
             )}
           </aside>
