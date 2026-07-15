@@ -908,3 +908,163 @@ function Field({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+function MarkdownBlock({ content }: { content: string }) {
+  return (
+    <div className="max-w-none text-[12.5px] leading-relaxed text-foreground/90 [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:uppercase [&_h2]:tracking-wide [&_h2]:text-muted-foreground [&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-xs [&_h3]:font-semibold [&_p]:my-1.5 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:my-0.5 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[11px] [&_a]:text-primary [&_a]:underline">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+    </div>
+  );
+}
+
+function ScoreCard({ score, label }: { score: number; label: string }) {
+  const tone =
+    score >= 80
+      ? "from-emerald-500/20 to-emerald-500/5 text-emerald-700 border-emerald-500/30"
+      : score >= 60
+      ? "from-blue-500/20 to-blue-500/5 text-blue-700 border-blue-500/30"
+      : score >= 40
+      ? "from-amber-500/20 to-amber-500/5 text-amber-700 border-amber-500/30"
+      : "from-rose-500/20 to-rose-500/5 text-rose-700 border-rose-500/30";
+  return (
+    <div className={cn("rounded-lg border bg-gradient-to-br p-3", tone)}>
+      <div className="flex items-center gap-2">
+        <Gauge className="h-4 w-4" />
+        <span className="text-[10px] font-semibold uppercase tracking-wide">Agent score</span>
+      </div>
+      <div className="mt-1 flex items-baseline gap-2">
+        <div className="text-3xl font-bold tabular-nums leading-none">{score}</div>
+        <div className="text-[10px] text-foreground/60">/ 100</div>
+      </div>
+      {label && <div className="mt-1 text-[11px] text-foreground/80">{label}</div>}
+    </div>
+  );
+}
+
+function ImportDialog({
+  open,
+  onOpenChange,
+  onImport,
+  importing,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onImport: (items: ParsedEntry[]) => void;
+  importing: boolean;
+}) {
+  const [entries, setEntries] = useState<ParsedEntry[]>([]);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [parsing, setParsing] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function reset() {
+    setEntries([]);
+    setFileName(null);
+    if (inputRef.current) inputRef.current.value = "";
+  }
+
+  async function handleFile(f: File) {
+    setParsing(true);
+    setFileName(f.name);
+    try {
+      const parsed = await parseUploadedFile(f);
+      if (parsed.length === 0) toast.error("Couldn't find any call entries in that file");
+      setEntries(parsed);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to parse file");
+      setEntries([]);
+    } finally {
+      setParsing(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) reset();
+        onOpenChange(v);
+      }}
+    >
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Import call logs</DialogTitle>
+          <DialogDescription>
+            Upload a spreadsheet (.xlsx, .csv), Word doc (.docx), or text file (.txt, .md).
+            The AI will read each entry and organize them under the right date. For Google Sheets or Docs,
+            use File → Download in Google Drive to export as .xlsx / .docx, then upload here.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-muted-foreground/30 bg-muted/30 p-6 text-center transition-colors hover:border-primary/50 hover:bg-muted/50">
+            <Upload className="h-6 w-6 text-muted-foreground" />
+            <div className="text-sm font-medium">
+              {fileName ? fileName : "Choose a file to upload"}
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              .xlsx · .xls · .csv · .docx · .txt · .md
+            </div>
+            <input
+              ref={inputRef}
+              type="file"
+              accept=".xlsx,.xls,.csv,.docx,.txt,.md,.tsv"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleFile(f);
+              }}
+            />
+          </label>
+
+          {parsing && <p className="text-xs text-muted-foreground">Parsing file…</p>}
+
+          {entries.length > 0 && (
+            <div className="rounded-lg border">
+              <div className="border-b bg-muted/30 px-3 py-1.5 text-[11px] font-medium">
+                Preview · {entries.length} {entries.length === 1 ? "entry" : "entries"} found
+              </div>
+              <div className="max-h-[240px] overflow-auto divide-y">
+                {entries.slice(0, 25).map((e, i) => (
+                  <div key={i} className="px-3 py-1.5 text-[11px]">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-muted-foreground">
+                        {e.callDate
+                          ? new Date(e.callDate).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                          : "No date — will use today"}
+                      </span>
+                    </div>
+                    <div className="line-clamp-2 text-foreground/80">{e.notes}</div>
+                  </div>
+                ))}
+                {entries.length > 25 && (
+                  <div className="px-3 py-1.5 text-[11px] text-muted-foreground">
+                    …and {entries.length - 25} more
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={importing}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => onImport(entries)}
+            disabled={entries.length === 0 || importing}
+          >
+            {importing ? (
+              <>
+                <Sparkles className="mr-2 h-4 w-4 animate-pulse" />
+                Analyzing {entries.length}…
+              </>
+            ) : (
+              <>Import {entries.length || ""}</>
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
