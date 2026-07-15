@@ -17,6 +17,7 @@ export type Database = {
       call_logs: {
         Row: {
           agreement_length_months: number | null
+          call_date: string | null
           category: string
           coupon: string | null
           coupon_amount: number | null
@@ -24,6 +25,7 @@ export type Database = {
           created_at: string
           customer_id: string | null
           customer_name: string | null
+          date_source: string
           follow_up_needed: boolean
           follow_up_notes: string | null
           id: string
@@ -38,6 +40,7 @@ export type Database = {
         }
         Insert: {
           agreement_length_months?: number | null
+          call_date?: string | null
           category: string
           coupon?: string | null
           coupon_amount?: number | null
@@ -45,6 +48,7 @@ export type Database = {
           created_at?: string
           customer_id?: string | null
           customer_name?: string | null
+          date_source?: string
           follow_up_needed?: boolean
           follow_up_notes?: string | null
           id?: string
@@ -59,6 +63,7 @@ export type Database = {
         }
         Update: {
           agreement_length_months?: number | null
+          call_date?: string | null
           category?: string
           coupon?: string | null
           coupon_amount?: number | null
@@ -66,6 +71,7 @@ export type Database = {
           created_at?: string
           customer_id?: string | null
           customer_name?: string | null
+          date_source?: string
           follow_up_needed?: boolean
           follow_up_notes?: string | null
           id?: string

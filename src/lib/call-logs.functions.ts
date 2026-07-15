@@ -4,12 +4,8 @@ import { generateObject, generateText, NoObjectGeneratedError } from "ai";
 import { z } from "zod";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 
-// Every field is nullish + defaulted so a slightly-off model response
-// still parses instead of throwing AI_NoObjectGeneratedError.
 const AnalysisSchema = z.object({
-  category: z
-    .enum(["saved", "closed", "resign", "lead", "other"])
-    .default("other"),
+  category: z.enum(["saved", "closed", "resign", "lead", "other"]).default("other"),
   customer_name: z.string().nullish().default(null),
   customer_id: z.string().nullish().default(null),
   summary: z.string().nullish().default(""),
@@ -23,6 +19,8 @@ const AnalysisSchema = z.object({
   follow_up_notes: z.string().nullish().default(null),
   sentiment: z.string().nullish().default(null),
   key_points: z.array(z.string()).nullish().default([]),
+  // ISO date string YYYY-MM-DD if the notes clearly mention when the call happened
+  detected_date: z.string().nullish().default(null),
 });
 
 type Analysis = z.infer<typeof AnalysisSchema>;
@@ -30,64 +28,87 @@ type Analysis = z.infer<typeof AnalysisSchema>;
 function getModel() {
   const key = process.env.LOVABLE_API_KEY;
   if (!key) throw new Error("Missing LOVABLE_API_KEY");
-  const gateway = createLovableAiGatewayProvider(key);
-  // Flash-lite is the fastest current Gemini tier for structured extraction.
-  return gateway("google/gemini-2.5-flash-lite");
+  return createLovableAiGatewayProvider(key)("google/gemini-2.5-flash-lite");
 }
 
-const SYSTEM_PROMPT = `You are an assistant that reads customer service / retention call notes and extracts structured data.
+const SYSTEM_PROMPT = `You read customer service / retention call notes and extract structured data.
 
-Categorize the call into exactly one of:
-- "saved": customer was going to cancel but was retained / saved from cancellation.
+Category (pick exactly one):
+- "saved": customer wanted to cancel but was retained.
 - "closed": account or subscription was closed / canceled.
 - "resign": customer signed a new agreement or renewed with new terms.
-- "lead": call was forwarded/sent to Inside Sales for more information on a new subscription, upsell, or new service (a sales lead).
-- "other": none of the above (general inquiry, complaint, info call, etc.).
+- "lead": call was forwarded/sent to Inside Sales for new subscription, upsell, or new service.
+- "other": general inquiry, complaint, info call, etc.
 
-Extract, when discussed:
-- customer_name (person or account name, null if unknown)
-- customer_id (external account/customer ID or number mentioned in the notes, null if none)
-- agreement_length_months (integer months; convert "1 year"=12, "2 years"=24)
-- price_per_service (monthly/service price as a number; null if not stated)
-- service_name (plan/service name)
-- coupon (coupon code or promo name if discussed, null otherwise). In this business a "coupon" is a discount/credit applied on the Field Routes platform toward a future service.
-- coupon_value (human-readable form, e.g. "50% off next service", "$25 credit")
-- coupon_amount (the discount as a dollar NUMBER the rep will enter on Field Routes. If the notes say "50% off next regular service" and price_per_service is 120, coupon_amount = 60. If "$25 off", coupon_amount = 25. If no coupon/discount was discussed, return 0.)
-- follow_up_needed (true only if the notes indicate a callback, action item, or unresolved issue; otherwise false)
-- follow_up_notes (short description of what to follow up on, null if none)
-- sentiment (short: "positive"/"neutral"/"negative"/"frustrated"/"happy")
-- summary (2-3 sentence summary)
-- key_points (array of 3-6 short bullet points highlighting what mattered)
+Extract when discussed:
+- customer_name, customer_id
+- agreement_length_months (integer months; "1 year"=12, "2 years"=24)
+- price_per_service (number; null if not stated)
+- service_name
+- coupon (code/name), coupon_value (human readable e.g. "50% off next service"), coupon_amount (dollar number; "50% off" of a $120 service = 60; "$25 off" = 25; 0 if no discount)
+- sentiment ("positive"/"neutral"/"negative"/"frustrated"/"happy")
+- summary (2-3 sentences)
+- key_points (3-6 short bullets)
+- detected_date: if the notes clearly mention when the call happened (e.g. "called 3/12/2025", "yesterday's call on Feb 4"), return ISO YYYY-MM-DD. Otherwise null. Do NOT guess.
 
-CRITICAL: Return a JSON object that exactly matches the schema. Use null for text fields not present in the notes; use 0 for coupon_amount when there is no discount; use false for follow_up_needed when nothing needs to be followed up. Do not invent values.`;
+follow_up_needed rules — be STRICT. Set true ONLY when:
+- The call was escalated to a branch / manager / office and someone must call the customer back later, OR
+- The customer explicitly asked to be called back at a later time, OR
+- The notes explicitly state a specific pending action tied to this account in the near future.
+
+Set follow_up_needed = false for ALL of these (they are normal work, not follow-ups):
+- Applying a coupon / discount / credit
+- Making a price change or resign
+- Saving a customer with a standard offer
+- Closing an account
+- Sending a lead to Inside Sales (unless the notes also say to personally call back)
+- Any completed action
+
+If follow_up_needed is false, follow_up_notes must be null.
+
+Return JSON matching the schema exactly. Use null for missing text; 0 for coupon_amount when no discount; false for follow_up_needed when nothing is truly pending.`;
+
+async function runExtraction(notes: string): Promise<Analysis> {
+  const model = getModel();
+  try {
+    const res = await generateObject({ model, schema: AnalysisSchema, system: SYSTEM_PROMPT, prompt: `Call notes:\n\n${notes}` });
+    return res.object;
+  } catch (err) {
+    if (NoObjectGeneratedError.isInstance(err)) {
+      const raw = (err as { text?: string }).text ?? "";
+      const match = raw.match(/\{[\s\S]*\}/);
+      const parsed = match ? safeJson(match[0]) : null;
+      return AnalysisSchema.parse(parsed ?? {});
+    }
+    throw err;
+  }
+}
+
+function safeJson(s: string): unknown {
+  try { return JSON.parse(s); } catch { return null; }
+}
+
+// Resolve a final call_date + date_source from user override, model detection, or fallback
+function resolveDate(userDate: string | null | undefined, detected: string | null | undefined): { call_date: string; date_source: string } {
+  if (userDate) {
+    const d = new Date(userDate);
+    if (!Number.isNaN(d.getTime())) return { call_date: d.toISOString(), date_source: "user_selected" };
+  }
+  if (detected) {
+    const d = new Date(detected);
+    if (!Number.isNaN(d.getTime())) return { call_date: d.toISOString(), date_source: "detected" };
+  }
+  return { call_date: new Date().toISOString(), date_source: "auto" };
+}
 
 export const analyzeAndSaveCallLog = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => z.object({ notes: z.string().min(3) }).parse(input))
+  .inputValidator((input: unknown) =>
+    z.object({ notes: z.string().min(3), callDate: z.string().nullish() }).parse(input),
+  )
   .handler(async ({ data, context }) => {
-    const model = getModel();
-
-    let output: Analysis;
-    try {
-      const res = await generateObject({
-        model,
-        schema: AnalysisSchema,
-        system: SYSTEM_PROMPT,
-        prompt: `Call notes:\n\n${data.notes}`,
-      });
-      output = res.object;
-    } catch (err) {
-      // Fallback: salvage whatever JSON the model produced, then parse
-      // with our lenient schema so we never crash the request.
-      if (NoObjectGeneratedError.isInstance(err)) {
-        const raw = (err as { text?: string }).text ?? "";
-        const match = raw.match(/\{[\s\S]*\}/);
-        const parsed = match ? safeJson(match[0]) : null;
-        output = AnalysisSchema.parse(parsed ?? {});
-      } else {
-        throw err;
-      }
-    }
+    const output = await runExtraction(data.notes);
+    const { call_date, date_source } = resolveDate(data.callDate ?? null, output.detected_date ?? null);
 
     const { data: row, error } = await context.supabase
       .from("call_logs")
@@ -105,9 +126,11 @@ export const analyzeAndSaveCallLog = createServerFn({ method: "POST" })
         coupon_value: output.coupon_value,
         coupon_amount: output.coupon_amount,
         follow_up_needed: output.follow_up_needed ?? false,
-        follow_up_notes: output.follow_up_notes,
+        follow_up_notes: (output.follow_up_needed ?? false) ? output.follow_up_notes : null,
         sentiment: output.sentiment,
         key_points: output.key_points,
+        call_date,
+        date_source,
       })
       .select()
       .single();
@@ -116,13 +139,62 @@ export const analyzeAndSaveCallLog = createServerFn({ method: "POST" })
     return row;
   });
 
-function safeJson(s: string): unknown {
-  try {
-    return JSON.parse(s);
-  } catch {
-    return null;
-  }
-}
+export const bulkImportCallLogs = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z.object({
+      items: z
+        .array(z.object({ notes: z.string().min(3), callDate: z.string().nullish() }))
+        .min(1)
+        .max(200),
+    }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    // Run extractions concurrently in small batches to stay fast without overwhelming the model.
+    const results: Analysis[] = new Array(data.items.length);
+    const concurrency = 6;
+    let i = 0;
+    async function worker() {
+      while (i < data.items.length) {
+        const idx = i++;
+        try {
+          results[idx] = await runExtraction(data.items[idx].notes);
+        } catch {
+          results[idx] = AnalysisSchema.parse({});
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(concurrency, data.items.length) }, worker));
+
+    const rows = data.items.map((item, idx) => {
+      const out = results[idx];
+      const { call_date, date_source } = resolveDate(item.callDate ?? null, out.detected_date ?? null);
+      return {
+        user_id: context.userId,
+        raw_notes: item.notes,
+        category: out.category,
+        customer_name: out.customer_name,
+        customer_id: out.customer_id,
+        summary: out.summary,
+        agreement_length_months: out.agreement_length_months,
+        price_per_service: out.price_per_service,
+        service_name: out.service_name,
+        coupon: out.coupon,
+        coupon_value: out.coupon_value,
+        coupon_amount: out.coupon_amount,
+        follow_up_needed: out.follow_up_needed ?? false,
+        follow_up_notes: (out.follow_up_needed ?? false) ? out.follow_up_notes : null,
+        sentiment: out.sentiment,
+        key_points: out.key_points,
+        call_date,
+        date_source,
+      };
+    });
+
+    const { error, data: inserted } = await context.supabase.from("call_logs").insert(rows).select();
+    if (error) throw new Error(error.message);
+    return { inserted: inserted?.length ?? 0 };
+  });
 
 export const listCallLogs = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -130,6 +202,7 @@ export const listCallLogs = createServerFn({ method: "GET" })
     const { data, error } = await context.supabase
       .from("call_logs")
       .select("*")
+      .order("call_date", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: false });
     if (error) throw new Error(error.message);
     return data ?? [];
@@ -149,21 +222,40 @@ export const generateInsights = createServerFn({ method: "POST" })
   .handler(async ({ context }) => {
     const { data: logs, error } = await context.supabase
       .from("call_logs")
-      .select("category,customer_name,summary,agreement_length_months,price_per_service,service_name,coupon,coupon_value,sentiment,key_points,created_at")
-      .order("created_at", { ascending: false })
-      .limit(100);
+      .select("category,customer_name,summary,agreement_length_months,price_per_service,service_name,coupon,coupon_value,coupon_amount,sentiment,follow_up_needed,key_points,call_date,created_at")
+      .order("call_date", { ascending: false, nullsFirst: false })
+      .limit(500);
     if (error) throw new Error(error.message);
     if (!logs || logs.length === 0) {
-      return { insights: "Log at least one call to unlock AI insights." };
+      return { daily: "Log at least one call to unlock AI insights.", overall: "", score: null as number | null, scoreLabel: "" };
     }
 
     const model = getModel();
-    const { text } = await generateText({
-      model,
-      system:
-        "You are a retention analyst. Given a list of call log summaries, produce concise, actionable insights formatted as GitHub-flavored MARKDOWN. Use `##` section headings, `**bold**` for key terms, `-` bullet lists, and short paragraphs. Include: overall trends, patterns in saves vs closes vs resigns vs leads, common reasons customers cancel, what's working to save them, coupon effectiveness, lead pipeline volume, and 3 concrete recommendations. Be specific and reference numbers where possible. Keep it under 400 words. Do not wrap the whole reply in a code fence.",
-      prompt: `Here are the last ${logs.length} calls as JSON:\n\n${JSON.stringify(logs, null, 2)}`,
-    });
 
-    return { insights: text };
+    // Today window
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const todaysLogs = logs.filter((l) => (l.call_date ?? l.created_at).slice(0, 10) === todayKey);
+
+    const [dailyRes, overallRes] = await Promise.all([
+      generateText({
+        model,
+        system:
+          "You are a retention coach giving a concise DAILY briefing. Use GitHub-flavored MARKDOWN with ## sections, **bold**, and - bullets. Cover: today's totals by category, standout calls, quick wins, and 2-3 tips for tomorrow. Keep under 220 words. Do not wrap in a code fence.",
+        prompt: `Today (${todayKey}) — ${todaysLogs.length} calls:\n${JSON.stringify(todaysLogs, null, 2)}\n\nRecent context (last 30 calls):\n${JSON.stringify(logs.slice(0, 30), null, 2)}`,
+      }),
+      generateText({
+        model,
+        system:
+          "You are a retention analyst producing an OVERALL PERFORMANCE REVIEW across the agent's entire logged history. Use GitHub-flavored MARKDOWN with ## headings and - bullets. Sections REQUIRED: `## Trends over time` (call out month-over-month or week-over-week movement), `## Strengths`, `## Weaknesses`, `## Coaching recommendations`. Then a final line exactly: `SCORE: <integer 0-100> — <one-line label>`. Score reflects save rate, resign volume, coupon effectiveness, lead generation, follow-through, and consistency. Under 320 words. Do not wrap in a code fence.",
+        prompt: `Full history (${logs.length} calls):\n${JSON.stringify(logs, null, 2)}`,
+      }),
+    ]);
+
+    // Parse score off the overall text
+    const scoreMatch = overallRes.text.match(/SCORE:\s*(\d{1,3})\s*(?:—|-|:)?\s*([^\n]*)/i);
+    const score = scoreMatch ? Math.min(100, Math.max(0, parseInt(scoreMatch[1], 10))) : null;
+    const scoreLabel = scoreMatch ? scoreMatch[2].trim() : "";
+    const overallCleaned = overallRes.text.replace(/SCORE:\s*\d{1,3}\s*(?:—|-|:)?\s*[^\n]*/i, "").trim();
+
+    return { daily: dailyRes.text, overall: overallCleaned, score, scoreLabel };
   });

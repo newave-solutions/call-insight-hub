@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   analyzeAndSaveCallLog,
+  bulkImportCallLogs,
   deleteCallLog,
   generateInsights,
   listCallLogs,
@@ -12,6 +13,18 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { parseUploadedFile, type ParsedEntry } from "@/lib/parse-uploaded-file";
+import { format } from "date-fns";
 import {
   Table,
   TableBody,
@@ -41,8 +54,10 @@ import {
   Ban,
   BellRing,
   CalendarClock,
+  CalendarIcon,
   DollarSign,
   FileSignature,
+  Gauge,
   LogOut,
   MessageSquare,
   PhoneCall,
@@ -52,6 +67,7 @@ import {
   Ticket,
   TrendingUp,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
@@ -87,11 +103,15 @@ function Dashboard() {
   const del = useServerFn(deleteCallLog);
   const listFn = useServerFn(listCallLogs);
   const insightsFn = useServerFn(generateInsights);
+  const bulkImportFn = useServerFn(bulkImportCallLogs);
 
   const [notes, setNotes] = useState("");
   const [filter, setFilter] = useState<Category | "all">("all");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [callDate, setCallDate] = useState<Date>(new Date());
+  const [dateOpen, setDateOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -105,15 +125,28 @@ function Dashboard() {
   });
 
   const analyzeMut = useMutation({
-    mutationFn: (n: string) => analyze({ data: { notes: n } }),
+    mutationFn: (input: { notes: string; callDate: string }) =>
+      analyze({ data: { notes: input.notes, callDate: input.callDate } }),
     onSuccess: () => {
       setNotes("");
+      setCallDate(new Date());
       qc.invalidateQueries({ queryKey: ["call_logs"] });
       qc.invalidateQueries({ queryKey: ["insights"] });
       toast.success("Call analyzed and logged");
       textareaRef.current?.focus();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to analyze"),
+  });
+
+  const bulkMut = useMutation({
+    mutationFn: (items: ParsedEntry[]) => bulkImportFn({ data: { items } }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["call_logs"] });
+      qc.invalidateQueries({ queryKey: ["insights"] });
+      toast.success(`Imported ${res.inserted} call${res.inserted === 1 ? "" : "s"}`);
+      setUploadOpen(false);
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Import failed"),
   });
 
   const deleteMut = useMutation({
@@ -198,7 +231,7 @@ function Dashboard() {
       map.set(key, entry);
     }
     for (const l of logs) {
-      const key = new Date(l.created_at).toISOString().slice(0, 10);
+      const key = new Date(l.call_date ?? l.created_at).toISOString().slice(0, 10);
       const e = map.get(key);
       if (!e) continue;
       if (l.category === "saved") e.saved += 1;
@@ -240,7 +273,7 @@ function Dashboard() {
       toast.error("Paste some call notes first");
       return;
     }
-    analyzeMut.mutate(trimmed);
+    analyzeMut.mutate({ notes: trimmed, callDate: callDate.toISOString() });
   }
 
   return (
@@ -322,7 +355,61 @@ function Dashboard() {
               <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 <Sparkles className="h-3.5 w-3.5 text-primary" /> Log a call
               </label>
-              <span className="text-[10px] text-muted-foreground">AI categorizes + extracts</span>
+              <div className="flex items-center gap-1.5">
+                <Popover open={dateOpen} onOpenChange={setDateOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-7 gap-1.5 px-2 text-[11px]">
+                      <CalendarIcon className="h-3.5 w-3.5" />
+                      {format(callDate, "MMM d, yyyy")}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-auto p-0 pointer-events-auto">
+                    <Calendar
+                      mode="single"
+                      selected={callDate}
+                      onSelect={(d) => {
+                        if (d) setCallDate(d);
+                        setDateOpen(false);
+                      }}
+                      disabled={(d) => d > new Date()}
+                      initialFocus
+                      className="p-3 pointer-events-auto"
+                    />
+                    <div className="border-t p-2 flex justify-between text-[11px]">
+                      <button
+                        type="button"
+                        className="text-muted-foreground hover:text-foreground"
+                        onClick={() => {
+                          const d = new Date();
+                          d.setDate(d.getDate() - 1);
+                          setCallDate(d);
+                          setDateOpen(false);
+                        }}
+                      >
+                        Yesterday
+                      </button>
+                      <button
+                        type="button"
+                        className="font-medium text-primary hover:underline"
+                        onClick={() => {
+                          setCallDate(new Date());
+                          setDateOpen(false);
+                        }}
+                      >
+                        Today
+                      </button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 px-2 text-[11px]"
+                  onClick={() => setUploadOpen(true)}
+                >
+                  <Upload className="h-3.5 w-3.5" /> Import
+                </Button>
+              </div>
             </div>
             <div className="relative">
               <Textarea
@@ -344,7 +431,9 @@ function Dashboard() {
                 {analyzeMut.isPending ? <Sparkles className="h-4 w-4 animate-pulse" /> : <ArrowUp className="h-4 w-4" />}
               </Button>
             </div>
-            <p className="mt-1.5 text-[10px] text-muted-foreground">⌘/Ctrl + Enter to submit</p>
+            <p className="mt-1.5 text-[10px] text-muted-foreground">
+              ⌘/Ctrl + Enter to submit · Call date defaults to today — change it above if the call was from a different day. AI still extracts a date it finds in your notes.
+            </p>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -476,24 +565,53 @@ function Dashboard() {
           </div>
 
           <aside className="rounded-xl border bg-card p-3 shadow-sm">
-            <div className="mb-2 flex items-center gap-1.5">
-              <Sparkles className="h-3.5 w-3.5 text-primary" />
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI insights</h3>
-            </div>
             {logs.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Log at least one call to see insights.</p>
+              <>
+                <div className="mb-2 flex items-center gap-1.5">
+                  <Sparkles className="h-3.5 w-3.5 text-primary" />
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI insights</h3>
+                </div>
+                <p className="text-xs text-muted-foreground">Log at least one call to see insights.</p>
+              </>
             ) : insightsQuery.isLoading ? (
-              <p className="text-xs text-muted-foreground">Analyzing…</p>
+              <>
+                <div className="mb-2 flex items-center gap-1.5">
+                  <Sparkles className="h-3.5 w-3.5 text-primary" />
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI insights</h3>
+                </div>
+                <p className="text-xs text-muted-foreground">Analyzing…</p>
+              </>
             ) : (
-              <div className="max-w-none text-[12.5px] leading-relaxed text-foreground/90 [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:uppercase [&_h2]:tracking-wide [&_h2]:text-muted-foreground [&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-xs [&_h3]:font-semibold [&_p]:my-1.5 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:my-0.5 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[11px] [&_a]:text-primary [&_a]:underline">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {insightsQuery.data?.insights ?? ""}
-                </ReactMarkdown>
+              <div className="space-y-3">
+                {insightsQuery.data?.score != null && (
+                  <ScoreCard score={insightsQuery.data.score} label={insightsQuery.data.scoreLabel} />
+                )}
+                <div>
+                  <div className="mb-1.5 flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5 text-primary" />
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Daily briefing</h3>
+                  </div>
+                  <MarkdownBlock content={insightsQuery.data?.daily ?? ""} />
+                </div>
+                <div className="border-t pt-3">
+                  <div className="mb-1.5 flex items-center gap-1.5">
+                    <TrendingUp className="h-3.5 w-3.5 text-primary" />
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overall performance</h3>
+                  </div>
+                  <MarkdownBlock content={insightsQuery.data?.overall ?? ""} />
+                </div>
               </div>
             )}
           </aside>
         </section>
       </main>
+
+      <ImportDialog
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        onImport={(items) => bulkMut.mutate(items)}
+        importing={bulkMut.isPending}
+      />
 
       {selected && <DetailDrawer log={selected} onClose={() => setSelectedId(null)} onDelete={() => deleteMut.mutate(selected.id)} />}
     </div>
@@ -633,7 +751,21 @@ function LogRow({ log, onSelect, onDelete }: { log: Log; onSelect: () => void; o
         )}
       </TableCell>
       <TableCell className="py-2 text-right text-[10px] text-muted-foreground">
-        {new Date(log.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+        <div className="flex flex-col items-end leading-tight">
+          <span>
+            {new Date(log.call_date ?? log.created_at).toLocaleDateString(undefined, {
+              month: "short",
+              day: "numeric",
+              year: "2-digit",
+            })}
+          </span>
+          {log.date_source === "auto" && (
+            <span className="text-[9px] uppercase tracking-wide text-muted-foreground/70">added</span>
+          )}
+          {log.date_source === "detected" && (
+            <span className="text-[9px] uppercase tracking-wide text-emerald-600">from notes</span>
+          )}
+        </div>
       </TableCell>
       <TableCell className="py-2">
         <button
@@ -671,7 +803,20 @@ function DetailDrawer({ log, onClose, onDelete }: { log: Log; onClose: () => voi
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Badge variant="secondary">{meta.label}</Badge>
                 {log.customer_id && <span className="font-mono">#{log.customer_id}</span>}
-                <span>{new Date(log.created_at).toLocaleString()}</span>
+                <span>
+                  {new Date(log.call_date ?? log.created_at).toLocaleDateString(undefined, {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                  {log.date_source === "auto" && (
+                    <span className="ml-1 text-[10px] uppercase tracking-wide text-muted-foreground/70">(added)</span>
+                  )}
+                  {log.date_source === "detected" && (
+                    <span className="ml-1 text-[10px] uppercase tracking-wide text-emerald-600">(from notes)</span>
+                  )}
+                </span>
               </div>
             </div>
           </div>
@@ -774,5 +919,165 @@ function Field({ label, value }: { label: string; value: string }) {
       <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</dt>
       <dd className="mt-0.5 text-sm font-medium">{value}</dd>
     </div>
+  );
+}
+function MarkdownBlock({ content }: { content: string }) {
+  return (
+    <div className="max-w-none text-[12.5px] leading-relaxed text-foreground/90 [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:uppercase [&_h2]:tracking-wide [&_h2]:text-muted-foreground [&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-xs [&_h3]:font-semibold [&_p]:my-1.5 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:my-0.5 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[11px] [&_a]:text-primary [&_a]:underline">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+    </div>
+  );
+}
+
+function ScoreCard({ score, label }: { score: number; label: string }) {
+  const tone =
+    score >= 80
+      ? "from-emerald-500/20 to-emerald-500/5 text-emerald-700 border-emerald-500/30"
+      : score >= 60
+      ? "from-blue-500/20 to-blue-500/5 text-blue-700 border-blue-500/30"
+      : score >= 40
+      ? "from-amber-500/20 to-amber-500/5 text-amber-700 border-amber-500/30"
+      : "from-rose-500/20 to-rose-500/5 text-rose-700 border-rose-500/30";
+  return (
+    <div className={cn("rounded-lg border bg-gradient-to-br p-3", tone)}>
+      <div className="flex items-center gap-2">
+        <Gauge className="h-4 w-4" />
+        <span className="text-[10px] font-semibold uppercase tracking-wide">Agent score</span>
+      </div>
+      <div className="mt-1 flex items-baseline gap-2">
+        <div className="text-3xl font-bold tabular-nums leading-none">{score}</div>
+        <div className="text-[10px] text-foreground/60">/ 100</div>
+      </div>
+      {label && <div className="mt-1 text-[11px] text-foreground/80">{label}</div>}
+    </div>
+  );
+}
+
+function ImportDialog({
+  open,
+  onOpenChange,
+  onImport,
+  importing,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onImport: (items: ParsedEntry[]) => void;
+  importing: boolean;
+}) {
+  const [entries, setEntries] = useState<ParsedEntry[]>([]);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [parsing, setParsing] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function reset() {
+    setEntries([]);
+    setFileName(null);
+    if (inputRef.current) inputRef.current.value = "";
+  }
+
+  async function handleFile(f: File) {
+    setParsing(true);
+    setFileName(f.name);
+    try {
+      const parsed = await parseUploadedFile(f);
+      if (parsed.length === 0) toast.error("Couldn't find any call entries in that file");
+      setEntries(parsed);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to parse file");
+      setEntries([]);
+    } finally {
+      setParsing(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) reset();
+        onOpenChange(v);
+      }}
+    >
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Import call logs</DialogTitle>
+          <DialogDescription>
+            Upload a spreadsheet (.xlsx, .csv), Word doc (.docx), or text file (.txt, .md).
+            The AI will read each entry and organize them under the right date. For Google Sheets or Docs,
+            use File → Download in Google Drive to export as .xlsx / .docx, then upload here.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-muted-foreground/30 bg-muted/30 p-6 text-center transition-colors hover:border-primary/50 hover:bg-muted/50">
+            <Upload className="h-6 w-6 text-muted-foreground" />
+            <div className="text-sm font-medium">
+              {fileName ? fileName : "Choose a file to upload"}
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              .xlsx · .xls · .csv · .docx · .txt · .md
+            </div>
+            <input
+              ref={inputRef}
+              type="file"
+              accept=".xlsx,.xls,.csv,.docx,.txt,.md,.tsv"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleFile(f);
+              }}
+            />
+          </label>
+
+          {parsing && <p className="text-xs text-muted-foreground">Parsing file…</p>}
+
+          {entries.length > 0 && (
+            <div className="rounded-lg border">
+              <div className="border-b bg-muted/30 px-3 py-1.5 text-[11px] font-medium">
+                Preview · {entries.length} {entries.length === 1 ? "entry" : "entries"} found
+              </div>
+              <div className="max-h-[240px] overflow-auto divide-y">
+                {entries.slice(0, 25).map((e, i) => (
+                  <div key={i} className="px-3 py-1.5 text-[11px]">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-muted-foreground">
+                        {e.callDate
+                          ? new Date(e.callDate).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                          : "No date — will use today"}
+                      </span>
+                    </div>
+                    <div className="line-clamp-2 text-foreground/80">{e.notes}</div>
+                  </div>
+                ))}
+                {entries.length > 25 && (
+                  <div className="px-3 py-1.5 text-[11px] text-muted-foreground">
+                    …and {entries.length - 25} more
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={importing}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => onImport(entries)}
+            disabled={entries.length === 0 || importing}
+          >
+            {importing ? (
+              <>
+                <Sparkles className="mr-2 h-4 w-4 animate-pulse" />
+                Analyzing {entries.length}…
+              </>
+            ) : (
+              <>Import {entries.length || ""}</>
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
