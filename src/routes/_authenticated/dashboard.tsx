@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   analyzeAndSaveCallLog,
+  bulkImportCallLogs,
   deleteCallLog,
   generateInsights,
   listCallLogs,
@@ -12,6 +13,18 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { parseUploadedFile, type ParsedEntry } from "@/lib/parse-uploaded-file";
+import { format } from "date-fns";
 import {
   Table,
   TableBody,
@@ -41,8 +54,10 @@ import {
   Ban,
   BellRing,
   CalendarClock,
+  CalendarIcon,
   DollarSign,
   FileSignature,
+  Gauge,
   LogOut,
   MessageSquare,
   PhoneCall,
@@ -52,6 +67,7 @@ import {
   Ticket,
   TrendingUp,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
