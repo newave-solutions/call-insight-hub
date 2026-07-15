@@ -751,7 +751,21 @@ function LogRow({ log, onSelect, onDelete }: { log: Log; onSelect: () => void; o
         )}
       </TableCell>
       <TableCell className="py-2 text-right text-[10px] text-muted-foreground">
-        {new Date(log.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+        <div className="flex flex-col items-end leading-tight">
+          <span>
+            {new Date(log.call_date ?? log.created_at).toLocaleDateString(undefined, {
+              month: "short",
+              day: "numeric",
+              year: "2-digit",
+            })}
+          </span>
+          {log.date_source === "auto" && (
+            <span className="text-[9px] uppercase tracking-wide text-muted-foreground/70">added</span>
+          )}
+          {log.date_source === "detected" && (
+            <span className="text-[9px] uppercase tracking-wide text-emerald-600">from notes</span>
+          )}
+        </div>
       </TableCell>
       <TableCell className="py-2">
         <button
