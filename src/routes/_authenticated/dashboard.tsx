@@ -355,7 +355,61 @@ function Dashboard() {
               <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 <Sparkles className="h-3.5 w-3.5 text-primary" /> Log a call
               </label>
-              <span className="text-[10px] text-muted-foreground">AI categorizes + extracts</span>
+              <div className="flex items-center gap-1.5">
+                <Popover open={dateOpen} onOpenChange={setDateOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-7 gap-1.5 px-2 text-[11px]">
+                      <CalendarIcon className="h-3.5 w-3.5" />
+                      {format(callDate, "MMM d, yyyy")}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-auto p-0 pointer-events-auto">
+                    <Calendar
+                      mode="single"
+                      selected={callDate}
+                      onSelect={(d) => {
+                        if (d) setCallDate(d);
+                        setDateOpen(false);
+                      }}
+                      disabled={(d) => d > new Date()}
+                      initialFocus
+                      className="p-3 pointer-events-auto"
+                    />
+                    <div className="border-t p-2 flex justify-between text-[11px]">
+                      <button
+                        type="button"
+                        className="text-muted-foreground hover:text-foreground"
+                        onClick={() => {
+                          const d = new Date();
+                          d.setDate(d.getDate() - 1);
+                          setCallDate(d);
+                          setDateOpen(false);
+                        }}
+                      >
+                        Yesterday
+                      </button>
+                      <button
+                        type="button"
+                        className="font-medium text-primary hover:underline"
+                        onClick={() => {
+                          setCallDate(new Date());
+                          setDateOpen(false);
+                        }}
+                      >
+                        Today
+                      </button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 px-2 text-[11px]"
+                  onClick={() => setUploadOpen(true)}
+                >
+                  <Upload className="h-3.5 w-3.5" /> Import
+                </Button>
+              </div>
             </div>
             <div className="relative">
               <Textarea
@@ -377,7 +431,9 @@ function Dashboard() {
                 {analyzeMut.isPending ? <Sparkles className="h-4 w-4 animate-pulse" /> : <ArrowUp className="h-4 w-4" />}
               </Button>
             </div>
-            <p className="mt-1.5 text-[10px] text-muted-foreground">⌘/Ctrl + Enter to submit</p>
+            <p className="mt-1.5 text-[10px] text-muted-foreground">
+              ⌘/Ctrl + Enter to submit · Call date defaults to today — change it above if the call was from a different day. AI still extracts a date it finds in your notes.
+            </p>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
