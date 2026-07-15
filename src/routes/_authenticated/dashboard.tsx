@@ -565,24 +565,53 @@ function Dashboard() {
           </div>
 
           <aside className="rounded-xl border bg-card p-3 shadow-sm">
-            <div className="mb-2 flex items-center gap-1.5">
-              <Sparkles className="h-3.5 w-3.5 text-primary" />
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI insights</h3>
-            </div>
             {logs.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Log at least one call to see insights.</p>
+              <>
+                <div className="mb-2 flex items-center gap-1.5">
+                  <Sparkles className="h-3.5 w-3.5 text-primary" />
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI insights</h3>
+                </div>
+                <p className="text-xs text-muted-foreground">Log at least one call to see insights.</p>
+              </>
             ) : insightsQuery.isLoading ? (
-              <p className="text-xs text-muted-foreground">Analyzing…</p>
+              <>
+                <div className="mb-2 flex items-center gap-1.5">
+                  <Sparkles className="h-3.5 w-3.5 text-primary" />
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI insights</h3>
+                </div>
+                <p className="text-xs text-muted-foreground">Analyzing…</p>
+              </>
             ) : (
-              <div className="max-w-none text-[12.5px] leading-relaxed text-foreground/90 [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-xs [&_h2]:font-semibold [&_h2]:uppercase [&_h2]:tracking-wide [&_h2]:text-muted-foreground [&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-xs [&_h3]:font-semibold [&_p]:my-1.5 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:my-0.5 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[11px] [&_a]:text-primary [&_a]:underline">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {insightsQuery.data?.insights ?? ""}
-                </ReactMarkdown>
+              <div className="space-y-3">
+                {insightsQuery.data?.score != null && (
+                  <ScoreCard score={insightsQuery.data.score} label={insightsQuery.data.scoreLabel} />
+                )}
+                <div>
+                  <div className="mb-1.5 flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5 text-primary" />
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Daily briefing</h3>
+                  </div>
+                  <MarkdownBlock content={insightsQuery.data?.daily ?? ""} />
+                </div>
+                <div className="border-t pt-3">
+                  <div className="mb-1.5 flex items-center gap-1.5">
+                    <TrendingUp className="h-3.5 w-3.5 text-primary" />
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overall performance</h3>
+                  </div>
+                  <MarkdownBlock content={insightsQuery.data?.overall ?? ""} />
+                </div>
               </div>
             )}
           </aside>
         </section>
       </main>
+
+      <ImportDialog
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        onImport={(items) => bulkMut.mutate(items)}
+        importing={bulkMut.isPending}
+      />
 
       {selected && <DetailDrawer log={selected} onClose={() => setSelectedId(null)} onDelete={() => deleteMut.mutate(selected.id)} />}
     </div>
