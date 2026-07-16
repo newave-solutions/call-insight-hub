@@ -172,6 +172,7 @@ function Dashboard() {
       closed: 0,
       resign: 0,
       lead: 0,
+      cancel_pending: 0,
       other: 0,
       revenue: 0,
       couponsUsed: 0,
@@ -205,7 +206,7 @@ function Dashboard() {
 
   const categoryPie = useMemo(
     () =>
-      (["saved", "closed", "resign", "lead", "other"] as Category[])
+      (["saved", "closed", "resign", "lead", "cancel_pending", "other"] as Category[])
         .map((c) => ({ name: CATEGORY_META[c].label, value: stats[c], key: c, fill: CATEGORY_META[c].hex }))
         .filter((d) => d.value > 0),
     [stats],
