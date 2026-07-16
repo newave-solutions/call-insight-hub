@@ -83,7 +83,7 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
   }),
 });
 
-type Category = "saved" | "closed" | "resign" | "lead" | "other";
+type Category = "saved" | "closed" | "resign" | "lead" | "cancel_pending" | "other";
 
 const CATEGORY_META: Record<
   Category,
@@ -93,6 +93,7 @@ const CATEGORY_META: Record<
   closed: { label: "Closed", icon: Ban, color: "text-rose-600 bg-rose-500/10", dot: "bg-rose-500", hex: "#f43f5e" },
   resign: { label: "Resign", icon: FileSignature, color: "text-blue-600 bg-blue-500/10", dot: "bg-blue-500", hex: "#3b82f6" },
   lead: { label: "Lead", icon: TrendingUp, color: "text-amber-600 bg-amber-500/10", dot: "bg-amber-500", hex: "#f59e0b" },
+  cancel_pending: { label: "Cancel Pending", icon: CalendarClock, color: "text-orange-600 bg-orange-500/10", dot: "bg-orange-500", hex: "#f97316" },
   other: { label: "Other", icon: MessageSquare, color: "text-muted-foreground bg-muted", dot: "bg-muted-foreground/60", hex: "#94a3b8" },
 };
 
