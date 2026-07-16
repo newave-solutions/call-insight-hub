@@ -58,15 +58,40 @@ function rowsToEntries(rows: Record<string, unknown>[]): ParsedEntry[] {
 }
 
 function splitPlainText(text: string): ParsedEntry[] {
-  // Split by blank lines OR runs of ---, or per-line if lines are long enough
+  // First try the "Saela" style: date header lines like "06/29/2026 (saves)" or "6/29/26"
+  // followed by per-line call entries until the next header/blank block.
+  const lines = text.split(/\r?\n/);
+  const headerRe = /^\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\b.*$/;
+  const entries: ParsedEntry[] = [];
+  let currentDate: string | null = null;
+  let sawHeader = false;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    const h = line.match(headerRe);
+    // Treat as a header only if the line is short-ish (i.e. mostly the date + optional label)
+    if (h && line.length <= 40) {
+      const d = new Date(h[1]);
+      if (!Number.isNaN(d.getTime())) {
+        currentDate = d.toISOString();
+        sawHeader = true;
+        continue;
+      }
+    }
+    if (line.length >= 8) {
+      entries.push({ notes: line, callDate: currentDate ?? extractInlineDate(line) });
+    }
+  }
+  if (sawHeader && entries.length > 0) return entries;
+
+  // Otherwise: blank-line separated blocks, then long-line fallback.
   const chunks = text
     .split(/\n\s*\n|\n-{3,}\n|\n={3,}\n/)
     .map((c) => c.trim())
     .filter((c) => c.length >= 15);
   if (chunks.length > 1) return chunks.map((notes) => ({ notes, callDate: extractInlineDate(notes) }));
-  // fall back to per-line if each line is decently long
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length >= 20);
-  if (lines.length > 1) return lines.map((notes) => ({ notes, callDate: extractInlineDate(notes) }));
+  const longLines = lines.map((l) => l.trim()).filter((l) => l.length >= 20);
+  if (longLines.length > 1) return longLines.map((notes) => ({ notes, callDate: extractInlineDate(notes) }));
   const single = text.trim();
   return single.length >= 5 ? [{ notes: single, callDate: extractInlineDate(single) }] : [];
 }
