@@ -615,6 +615,7 @@ function Dashboard() {
         onOpenChange={setUploadOpen}
         onImport={(items) => bulkMut.mutate(items)}
         importing={bulkMut.isPending}
+        existingLogs={logs}
       />
 
       {selected && <DetailDrawer log={selected} onClose={() => setSelectedId(null)} onDelete={() => deleteMut.mutate(selected.id)} />}
