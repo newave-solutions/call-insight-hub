@@ -335,6 +335,13 @@ function Dashboard() {
             label="Leads"
           />
           <Kpi
+            active={filter === "cancel_pending"}
+            onClick={() => setFilter(filter === "cancel_pending" ? "all" : "cancel_pending")}
+            meta={CATEGORY_META.cancel_pending}
+            value={stats.cancel_pending}
+            label="Cancel pending"
+          />
+          <Kpi
             active={filter === "other"}
             onClick={() => setFilter(filter === "other" ? "all" : "other")}
             meta={CATEGORY_META.other}
@@ -343,11 +350,6 @@ function Dashboard() {
           />
           <MiniKpi icon={FileSignature} label="Save rate" value={logs.length ? `${saveRate}%` : "—"} />
           <MiniKpi icon={CalendarClock} label="Avg agreement" value={avgAgreement ? `${avgAgreement} mo` : "—"} />
-          <MiniKpi
-            icon={DollarSign}
-            label="Resign revenue"
-            value={`$${stats.revenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
-          />
         </section>
 
         {/* Composer + charts */}
