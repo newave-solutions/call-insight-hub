@@ -963,22 +963,62 @@ function ImportDialog({
   onOpenChange,
   onImport,
   importing,
+  existingLogs,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onImport: (items: ParsedEntry[]) => void;
   importing: boolean;
+  existingLogs: Log[];
 }) {
   const [entries, setEntries] = useState<ParsedEntry[]>([]);
+  const [skip, setSkip] = useState<Set<number>>(new Set());
   const [fileName, setFileName] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   function reset() {
     setEntries([]);
+    setSkip(new Set());
     setFileName(null);
+    setDragging(false);
     if (inputRef.current) inputRef.current.value = "";
   }
+
+  // Existing (customer_id, YYYY-MM-DD) pairs for duplicate detection against DB.
+  const existingKeys = useMemo(() => {
+    const s = new Set<string>();
+    for (const l of existingLogs) {
+      if (!l.customer_id) continue;
+      const day = new Date(l.call_date ?? l.created_at).toISOString().slice(0, 10);
+      s.add(`${l.customer_id.trim()}|${day}`);
+    }
+    return s;
+  }, [existingLogs]);
+
+  // Best-effort customer_id sniff from raw notes (leading numeric token >=5 digits).
+  function sniffId(notes: string): string | null {
+    const m = notes.match(/(?:^|[\s#])(\d{5,})/);
+    return m ? m[1] : null;
+  }
+
+  const flagged = useMemo(() => {
+    // For each parsed entry: existing (already in DB same-day) or in-file dup (later index).
+    const seen = new Map<string, number>();
+    return entries.map((e, i) => {
+      const id = sniffId(e.notes);
+      const day = (e.callDate ? new Date(e.callDate) : new Date()).toISOString().slice(0, 10);
+      if (!id) return { reason: null as null | "existing" | "in-file", dupOf: -1 };
+      const key = `${id}|${day}`;
+      if (existingKeys.has(key)) return { reason: "existing" as const, dupOf: -1 };
+      if (seen.has(key)) return { reason: "in-file" as const, dupOf: seen.get(key)! };
+      seen.set(key, i);
+      return { reason: null, dupOf: -1 };
+    });
+  }, [entries, existingKeys]);
+
+  const dupCount = flagged.filter((f) => f.reason).length;
 
   async function handleFile(f: File) {
     setParsing(true);
@@ -987,6 +1027,8 @@ function ImportDialog({
       const parsed = await parseUploadedFile(f);
       if (parsed.length === 0) toast.error("Couldn't find any call entries in that file");
       setEntries(parsed);
+      // Pre-skip duplicates by default.
+      setSkip(new Set());
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to parse file");
       setEntries([]);
@@ -994,6 +1036,23 @@ function ImportDialog({
       setParsing(false);
     }
   }
+
+  // Auto-select duplicates to skip once flagged updates.
+  useEffect(() => {
+    if (entries.length === 0) return;
+    setSkip(new Set(flagged.map((f, i) => (f.reason ? i : -1)).filter((i) => i >= 0)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries]);
+
+  function toggleSkip(i: number) {
+    setSkip((prev) => {
+      const n = new Set(prev);
+      if (n.has(i)) n.delete(i); else n.add(i);
+      return n;
+    });
+  }
+
+  const toImport = entries.filter((_, i) => !skip.has(i));
 
   return (
     <Dialog
@@ -1008,16 +1067,45 @@ function ImportDialog({
           <DialogTitle>Import call logs</DialogTitle>
           <DialogDescription>
             Upload a spreadsheet (.xlsx, .csv), Word doc (.docx), or text file (.txt, .md).
-            The AI will read each entry and organize them under the right date. For Google Sheets or Docs,
+            Drag & drop or click to choose. The AI will read each entry and organize them under the right date. For Google Sheets or Docs,
             use File → Download in Google Drive to export as .xlsx / .docx, then upload here.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
-          <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-muted-foreground/30 bg-muted/30 p-6 text-center transition-colors hover:border-primary/50 hover:bg-muted/50">
+          <label
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDragging(true);
+            }}
+            onDragEnter={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDragging(true);
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDragging(false);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDragging(false);
+              const f = e.dataTransfer.files?.[0];
+              if (f) handleFile(f);
+            }}
+            className={cn(
+              "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 text-center transition-colors",
+              dragging
+                ? "border-primary bg-primary/10"
+                : "border-muted-foreground/30 bg-muted/30 hover:border-primary/50 hover:bg-muted/50",
+            )}
+          >
             <Upload className="h-6 w-6 text-muted-foreground" />
             <div className="text-sm font-medium">
-              {fileName ? fileName : "Choose a file to upload"}
+              {fileName ? fileName : dragging ? "Drop the file here" : "Drop a file here or click to browse"}
             </div>
             <div className="text-[11px] text-muted-foreground">
               .xlsx · .xls · .csv · .docx · .txt · .md
@@ -1038,27 +1126,58 @@ function ImportDialog({
 
           {entries.length > 0 && (
             <div className="rounded-lg border">
-              <div className="border-b bg-muted/30 px-3 py-1.5 text-[11px] font-medium">
-                Preview · {entries.length} {entries.length === 1 ? "entry" : "entries"} found
-              </div>
-              <div className="max-h-[240px] overflow-auto divide-y">
-                {entries.slice(0, 25).map((e, i) => (
-                  <div key={i} className="px-3 py-1.5 text-[11px]">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-muted-foreground">
-                        {e.callDate
-                          ? new Date(e.callDate).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
-                          : "No date — will use today"}
-                      </span>
-                    </div>
-                    <div className="line-clamp-2 text-foreground/80">{e.notes}</div>
-                  </div>
-                ))}
-                {entries.length > 25 && (
-                  <div className="px-3 py-1.5 text-[11px] text-muted-foreground">
-                    …and {entries.length - 25} more
-                  </div>
+              <div className="flex items-center justify-between border-b bg-muted/30 px-3 py-1.5 text-[11px] font-medium">
+                <span>
+                  Preview · {entries.length} {entries.length === 1 ? "entry" : "entries"} · {toImport.length} to import
+                </span>
+                {dupCount > 0 && (
+                  <span className="text-amber-700">
+                    {dupCount} possible duplicate{dupCount === 1 ? "" : "s"} — uncheck to include
+                  </span>
                 )}
+              </div>
+              <div className="max-h-[280px] overflow-auto divide-y">
+                {entries.map((e, i) => {
+                  const flag = flagged[i];
+                  const skipped = skip.has(i);
+                  return (
+                    <label
+                      key={i}
+                      className={cn(
+                        "flex cursor-pointer items-start gap-2 px-3 py-1.5 text-[11px]",
+                        skipped && "opacity-50",
+                        flag.reason && "bg-amber-500/5",
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={!skipped}
+                        onChange={() => toggleSkip(i)}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-muted-foreground">
+                            {e.callDate
+                              ? new Date(e.callDate).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                              : "No date — will use today"}
+                          </span>
+                          {flag.reason === "existing" && (
+                            <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                              Already logged for this day
+                            </span>
+                          )}
+                          {flag.reason === "in-file" && (
+                            <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                              Duplicate of row {flag.dupOf + 1}
+                            </span>
+                          )}
+                        </div>
+                        <div className="line-clamp-2 text-foreground/80">{e.notes}</div>
+                      </div>
+                    </label>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1069,16 +1188,16 @@ function ImportDialog({
             Cancel
           </Button>
           <Button
-            onClick={() => onImport(entries)}
-            disabled={entries.length === 0 || importing}
+            onClick={() => onImport(toImport)}
+            disabled={toImport.length === 0 || importing}
           >
             {importing ? (
               <>
                 <Sparkles className="mr-2 h-4 w-4 animate-pulse" />
-                Analyzing {entries.length}…
+                Analyzing {toImport.length}…
               </>
             ) : (
-              <>Import {entries.length || ""}</>
+              <>Import {toImport.length || ""}</>
             )}
           </Button>
         </DialogFooter>
