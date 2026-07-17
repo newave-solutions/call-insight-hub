@@ -547,6 +547,50 @@ function Dashboard() {
                 <span className="ml-1.5 text-muted-foreground/60">{filtered.length}</span>
               </h2>
               <div className="flex flex-1 items-center gap-2">
+                <Popover open={dayFilterOpen} onOpenChange={setDayFilterOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-8 gap-1.5 px-2 text-[11px]">
+                      <CalendarDays className="h-3.5 w-3.5" />
+                      {dayFilter ? format(dayFilter, "MMM d, yyyy") : "All days"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-auto p-0 pointer-events-auto">
+                    <Calendar
+                      mode="single"
+                      selected={dayFilter ?? undefined}
+                      onSelect={(d) => {
+                        setDayFilter(d ?? null);
+                        setDayFilterOpen(false);
+                      }}
+                      modifiers={{ hasLogs: (d) => daysWithLogs.has(toDayKey(d)) }}
+                      modifiersClassNames={{ hasLogs: "font-semibold underline underline-offset-4 decoration-primary" }}
+                      initialFocus
+                      className="p-3 pointer-events-auto"
+                    />
+                    <div className="flex justify-between border-t p-2 text-[11px]">
+                      <button
+                        type="button"
+                        className="text-muted-foreground hover:text-foreground"
+                        onClick={() => {
+                          setDayFilter(null);
+                          setDayFilterOpen(false);
+                        }}
+                      >
+                        Show all
+                      </button>
+                      <button
+                        type="button"
+                        className="font-medium text-primary hover:underline"
+                        onClick={() => {
+                          setDayFilter(new Date());
+                          setDayFilterOpen(false);
+                        }}
+                      >
+                        Today
+                      </button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
                 <div className="relative ml-auto w-full max-w-[220px]">
                   <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                   <Input
@@ -556,12 +600,13 @@ function Dashboard() {
                     className="h-8 pl-7 text-xs"
                   />
                 </div>
-                {(filter !== "all" || query) && (
+                {(filter !== "all" || query || dayFilter) && (
                   <button
                     className="text-[11px] text-muted-foreground hover:text-foreground"
                     onClick={() => {
                       setFilter("all");
                       setQuery("");
+                      setDayFilter(null);
                     }}
                   >
                     Clear
@@ -654,7 +699,15 @@ function Dashboard() {
         existingLogs={logs}
       />
 
-      {selected && <DetailDrawer log={selected} onClose={() => setSelectedId(null)} onDelete={() => deleteMut.mutate(selected.id)} />}
+      {selected && (
+        <DetailDrawer
+          log={selected}
+          onClose={() => setSelectedId(null)}
+          onDelete={() => deleteMut.mutate(selected.id)}
+          onSave={(patch) => updateMut.mutateAsync({ id: selected.id, patch })}
+          saving={updateMut.isPending}
+        />
+      )}
     </div>
   );
 }
