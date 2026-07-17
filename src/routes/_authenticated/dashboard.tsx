@@ -8,6 +8,7 @@ import {
   deleteCallLog,
   generateInsights,
   listCallLogs,
+  updateCallLog,
 } from "@/lib/call-logs.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -55,7 +56,10 @@ import {
   BellRing,
   CalendarClock,
   CalendarIcon,
+  CalendarDays,
   DollarSign,
+  Pencil,
+  X,
   FileSignature,
   Gauge,
   LogOut,
