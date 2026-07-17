@@ -246,6 +246,49 @@ export const deleteCallLog = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+const UpdateSchema = z.object({
+  id: z.string().uuid(),
+  patch: z
+    .object({
+      customer_name: z.string().nullish(),
+      customer_id: z.string().nullish(),
+      category: z.enum(["saved", "closed", "resign", "lead", "cancel_pending", "other"]).optional(),
+      summary: z.string().nullish(),
+      service_name: z.string().nullish(),
+      price_per_service: z.number().nullish(),
+      agreement_length_months: z.number().int().nullish(),
+      coupon: z.string().nullish(),
+      coupon_value: z.string().nullish(),
+      coupon_amount: z.number().nullish(),
+      follow_up_needed: z.boolean().optional(),
+      follow_up_notes: z.string().nullish(),
+      sentiment: z.string().nullish(),
+      call_date: z.string().nullish(),
+    })
+    .partial(),
+});
+
+export const updateCallLog = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => UpdateSchema.parse(input))
+  .handler(async ({ data, context }) => {
+    const patch: Record<string, unknown> = { ...data.patch };
+    // Normalize follow-up notes when follow_up_needed is explicitly false
+    if (patch.follow_up_needed === false) patch.follow_up_notes = null;
+    // If the caller set a call_date, mark it as user-selected so we don't overwrite semantics later.
+    if (typeof patch.call_date === "string" && patch.call_date) {
+      patch.date_source = "user_selected";
+    }
+    const { data: row, error } = await context.supabase
+      .from("call_logs")
+      .update(patch)
+      .eq("id", data.id)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return row;
+  });
+
 export const generateInsights = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
