@@ -109,6 +109,7 @@ function Dashboard() {
   const listFn = useServerFn(listCallLogs);
   const insightsFn = useServerFn(generateInsights);
   const bulkImportFn = useServerFn(bulkImportCallLogs);
+  const updateFn = useServerFn(updateCallLog);
 
   const [notes, setNotes] = useState("");
   const [filter, setFilter] = useState<Category | "all">("all");
@@ -117,6 +118,8 @@ function Dashboard() {
   const [callDate, setCallDate] = useState<Date>(new Date());
   const [dateOpen, setDateOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [dayFilter, setDayFilter] = useState<Date | null>(null);
+  const [dayFilterOpen, setDayFilterOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -161,6 +164,17 @@ function Dashboard() {
       if (selectedId) setSelectedId(null);
       toast.success("Deleted");
     },
+  });
+
+  const updateMut = useMutation({
+    mutationFn: (input: { id: string; patch: Record<string, unknown> }) =>
+      updateFn({ data: input as never }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["call_logs"] });
+      qc.invalidateQueries({ queryKey: ["insights"] });
+      toast.success("Saved");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Save failed"),
   });
 
   const insightsQuery = useQuery({
@@ -251,8 +265,13 @@ function Dashboard() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const dayKey = dayFilter ? toDayKey(dayFilter) : null;
     return logs.filter((l) => {
       if (filter !== "all" && l.category !== filter) return false;
+      if (dayKey) {
+        const k = new Date(l.call_date ?? l.created_at).toISOString().slice(0, 10);
+        if (k !== dayKey) return false;
+      }
       if (!q) return true;
       return (
         (l.customer_name ?? "").toLowerCase().includes(q) ||
@@ -262,7 +281,13 @@ function Dashboard() {
         (l.coupon ?? "").toLowerCase().includes(q)
       );
     });
-  }, [logs, filter, query]);
+  }, [logs, filter, query, dayFilter]);
+
+  const daysWithLogs = useMemo(() => {
+    const s = new Set<string>();
+    for (const l of logs) s.add(new Date(l.call_date ?? l.created_at).toISOString().slice(0, 10));
+    return s;
+  }, [logs]);
 
   const selected = logs.find((l) => l.id === selectedId) ?? null;
 
