@@ -272,10 +272,8 @@ export const updateCallLog = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => UpdateSchema.parse(input))
   .handler(async ({ data, context }) => {
-    const patch: Record<string, unknown> = { ...data.patch };
-    // Normalize follow-up notes when follow_up_needed is explicitly false
+    const patch: import("@/integrations/supabase/types").TablesUpdate<"call_logs"> = { ...data.patch };
     if (patch.follow_up_needed === false) patch.follow_up_notes = null;
-    // If the caller set a call_date, mark it as user-selected so we don't overwrite semantics later.
     if (typeof patch.call_date === "string" && patch.call_date) {
       patch.date_source = "user_selected";
     }
