@@ -246,6 +246,47 @@ export const deleteCallLog = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+const UpdateSchema = z.object({
+  id: z.string().uuid(),
+  patch: z
+    .object({
+      customer_name: z.string().nullish(),
+      customer_id: z.string().nullish(),
+      category: z.enum(["saved", "closed", "resign", "lead", "cancel_pending", "other"]).optional(),
+      summary: z.string().nullish(),
+      service_name: z.string().nullish(),
+      price_per_service: z.number().nullish(),
+      agreement_length_months: z.number().int().nullish(),
+      coupon: z.string().nullish(),
+      coupon_value: z.string().nullish(),
+      coupon_amount: z.number().nullish(),
+      follow_up_needed: z.boolean().optional(),
+      follow_up_notes: z.string().nullish(),
+      sentiment: z.string().nullish(),
+      call_date: z.string().nullish(),
+    })
+    .partial(),
+});
+
+export const updateCallLog = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => UpdateSchema.parse(input))
+  .handler(async ({ data, context }) => {
+    const patch: import("@/integrations/supabase/types").TablesUpdate<"call_logs"> = { ...data.patch };
+    if (patch.follow_up_needed === false) patch.follow_up_notes = null;
+    if (typeof patch.call_date === "string" && patch.call_date) {
+      patch.date_source = "user_selected";
+    }
+    const { data: row, error } = await context.supabase
+      .from("call_logs")
+      .update(patch)
+      .eq("id", data.id)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return row;
+  });
+
 export const generateInsights = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -269,13 +310,13 @@ export const generateInsights = createServerFn({ method: "POST" })
       generateText({
         model,
         system:
-          "You are a retention coach giving a concise DAILY briefing. Use GitHub-flavored MARKDOWN with ## sections, **bold**, and - bullets. Cover: today's totals by category, standout calls, quick wins, and 2-3 tips for tomorrow. Keep under 220 words. Do not wrap in a code fence.",
+          "You are a retention coach for SAELA PEST CONTROL giving a concise DAILY briefing. Evaluate calls through the Saela Way customer-experience values: building value, ownership, empathy, professionalism, and clear communication. Use GitHub-flavored MARKDOWN with ## sections, **bold**, and - bullets. Cover: today's totals by category, standout calls, Saela Way wins & misses (call out where the agent showed ownership/empathy/building value — or missed the chance to), and 2-3 tips for tomorrow. Keep under 240 words. Do not wrap in a code fence.",
         prompt: `Today (${todayKey}) — ${todaysLogs.length} calls:\n${JSON.stringify(todaysLogs, null, 2)}\n\nRecent context (last 30 calls):\n${JSON.stringify(logs.slice(0, 30), null, 2)}`,
       }),
       generateText({
         model,
         system:
-          "You are a retention analyst producing an OVERALL PERFORMANCE REVIEW across the agent's entire logged history. Use GitHub-flavored MARKDOWN with ## headings and - bullets. Sections REQUIRED: `## Trends over time` (call out month-over-month or week-over-week movement), `## Strengths`, `## Weaknesses`, `## Coaching recommendations`. Then a final line exactly: `SCORE: <integer 0-100> — <one-line label>`. Score reflects save rate, resign volume, coupon effectiveness, lead generation, follow-through, and consistency. Under 320 words. Do not wrap in a code fence.",
+          "You are a retention analyst for SAELA PEST CONTROL producing an OVERALL PERFORMANCE REVIEW across the agent's entire logged history. Grade the agent against the Saela Way customer-experience values: **building value**, **ownership**, **empathy**, **professionalism**, and **clear communication** — in addition to hard metrics. Use GitHub-flavored MARKDOWN with ## headings and - bullets. Sections REQUIRED: `## Trends over time` (month-over-month or week-over-week movement), `## Saela Way scorecard` (one bullet per value: building value, ownership, empathy, professionalism, communication — each with a short assessment and evidence from the notes), `## Strengths`, `## Weaknesses`, `## Coaching recommendations`. Then a final line exactly: `SCORE: <integer 0-100> — <one-line label>`. Score blends save rate, resign volume, coupon effectiveness, lead generation, follow-through, consistency AND Saela Way behavior. Under 360 words. Do not wrap in a code fence.",
         prompt: `Full history (${logs.length} calls):\n${JSON.stringify(logs, null, 2)}`,
       }),
     ]);

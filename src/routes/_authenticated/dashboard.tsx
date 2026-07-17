@@ -8,6 +8,7 @@ import {
   deleteCallLog,
   generateInsights,
   listCallLogs,
+  updateCallLog,
 } from "@/lib/call-logs.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -55,7 +56,10 @@ import {
   BellRing,
   CalendarClock,
   CalendarIcon,
+  CalendarDays,
   DollarSign,
+  Pencil,
+  X,
   FileSignature,
   Gauge,
   LogOut,
@@ -85,6 +89,13 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 
 type Category = "saved" | "closed" | "resign" | "lead" | "cancel_pending" | "other";
 
+function toDayKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 const CATEGORY_META: Record<
   Category,
   { label: string; icon: typeof Shield; color: string; dot: string; hex: string }
@@ -105,6 +116,7 @@ function Dashboard() {
   const listFn = useServerFn(listCallLogs);
   const insightsFn = useServerFn(generateInsights);
   const bulkImportFn = useServerFn(bulkImportCallLogs);
+  const updateFn = useServerFn(updateCallLog);
 
   const [notes, setNotes] = useState("");
   const [filter, setFilter] = useState<Category | "all">("all");
@@ -113,6 +125,8 @@ function Dashboard() {
   const [callDate, setCallDate] = useState<Date>(new Date());
   const [dateOpen, setDateOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [dayFilter, setDayFilter] = useState<Date | null>(null);
+  const [dayFilterOpen, setDayFilterOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -157,6 +171,17 @@ function Dashboard() {
       if (selectedId) setSelectedId(null);
       toast.success("Deleted");
     },
+  });
+
+  const updateMut = useMutation({
+    mutationFn: (input: { id: string; patch: Record<string, unknown> }) =>
+      updateFn({ data: input as never }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["call_logs"] });
+      qc.invalidateQueries({ queryKey: ["insights"] });
+      toast.success("Saved");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Save failed"),
   });
 
   const insightsQuery = useQuery({
@@ -247,8 +272,13 @@ function Dashboard() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const dayKey = dayFilter ? toDayKey(dayFilter) : null;
     return logs.filter((l) => {
       if (filter !== "all" && l.category !== filter) return false;
+      if (dayKey) {
+        const k = toDayKey(new Date(l.call_date ?? l.created_at));
+        if (k !== dayKey) return false;
+      }
       if (!q) return true;
       return (
         (l.customer_name ?? "").toLowerCase().includes(q) ||
@@ -258,7 +288,13 @@ function Dashboard() {
         (l.coupon ?? "").toLowerCase().includes(q)
       );
     });
-  }, [logs, filter, query]);
+  }, [logs, filter, query, dayFilter]);
+
+  const daysWithLogs = useMemo(() => {
+    const s = new Set<string>();
+    for (const l of logs) s.add(toDayKey(new Date(l.call_date ?? l.created_at)));
+    return s;
+  }, [logs]);
 
   const selected = logs.find((l) => l.id === selectedId) ?? null;
 
@@ -511,6 +547,50 @@ function Dashboard() {
                 <span className="ml-1.5 text-muted-foreground/60">{filtered.length}</span>
               </h2>
               <div className="flex flex-1 items-center gap-2">
+                <Popover open={dayFilterOpen} onOpenChange={setDayFilterOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-8 gap-1.5 px-2 text-[11px]">
+                      <CalendarDays className="h-3.5 w-3.5" />
+                      {dayFilter ? format(dayFilter, "MMM d, yyyy") : "All days"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-auto p-0 pointer-events-auto">
+                    <Calendar
+                      mode="single"
+                      selected={dayFilter ?? undefined}
+                      onSelect={(d) => {
+                        setDayFilter(d ?? null);
+                        setDayFilterOpen(false);
+                      }}
+                      modifiers={{ hasLogs: (d) => daysWithLogs.has(toDayKey(d)) }}
+                      modifiersClassNames={{ hasLogs: "font-semibold underline underline-offset-4 decoration-primary" }}
+                      initialFocus
+                      className="p-3 pointer-events-auto"
+                    />
+                    <div className="flex justify-between border-t p-2 text-[11px]">
+                      <button
+                        type="button"
+                        className="text-muted-foreground hover:text-foreground"
+                        onClick={() => {
+                          setDayFilter(null);
+                          setDayFilterOpen(false);
+                        }}
+                      >
+                        Show all
+                      </button>
+                      <button
+                        type="button"
+                        className="font-medium text-primary hover:underline"
+                        onClick={() => {
+                          setDayFilter(new Date());
+                          setDayFilterOpen(false);
+                        }}
+                      >
+                        Today
+                      </button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
                 <div className="relative ml-auto w-full max-w-[220px]">
                   <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                   <Input
@@ -520,12 +600,13 @@ function Dashboard() {
                     className="h-8 pl-7 text-xs"
                   />
                 </div>
-                {(filter !== "all" || query) && (
+                {(filter !== "all" || query || dayFilter) && (
                   <button
                     className="text-[11px] text-muted-foreground hover:text-foreground"
                     onClick={() => {
                       setFilter("all");
                       setQuery("");
+                      setDayFilter(null);
                     }}
                   >
                     Clear
@@ -618,7 +699,15 @@ function Dashboard() {
         existingLogs={logs}
       />
 
-      {selected && <DetailDrawer log={selected} onClose={() => setSelectedId(null)} onDelete={() => deleteMut.mutate(selected.id)} />}
+      {selected && (
+        <DetailDrawer
+          log={selected}
+          onClose={() => setSelectedId(null)}
+          onDelete={() => deleteMut.mutate(selected.id)}
+          onSave={(patch) => updateMut.mutateAsync({ id: selected.id, patch })}
+          saving={updateMut.isPending}
+        />
+      )}
     </div>
   );
 }
@@ -788,10 +877,66 @@ function LogRow({ log, onSelect, onDelete }: { log: Log; onSelect: () => void; o
   );
 }
 
-function DetailDrawer({ log, onClose, onDelete }: { log: Log; onClose: () => void; onDelete: () => void }) {
+function DetailDrawer({
+  log,
+  onClose,
+  onDelete,
+  onSave,
+  saving,
+}: {
+  log: Log;
+  onClose: () => void;
+  onDelete: () => void;
+  onSave: (patch: Partial<Record<string, unknown>>) => Promise<unknown>;
+  saving: boolean;
+}) {
   const meta = CATEGORY_META[log.category as Category];
   const Icon = meta.icon;
   const points = Array.isArray(log.key_points) ? (log.key_points as string[]) : [];
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({
+    customer_name: log.customer_name ?? "",
+    customer_id: log.customer_id ?? "",
+    category: log.category,
+    summary: log.summary ?? "",
+    service_name: log.service_name ?? "",
+    price_per_service: log.price_per_service != null ? String(log.price_per_service) : "",
+    agreement_length_months: log.agreement_length_months != null ? String(log.agreement_length_months) : "",
+    coupon: log.coupon ?? "",
+    coupon_value: log.coupon_value ?? "",
+    coupon_amount: log.coupon_amount != null ? String(log.coupon_amount) : "",
+    follow_up_needed: log.follow_up_needed,
+    follow_up_notes: log.follow_up_notes ?? "",
+    sentiment: log.sentiment ?? "",
+    call_date: log.call_date ?? log.created_at,
+  });
+  const [dateOpen, setDateOpen] = useState(false);
+
+  function set<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
+    setForm((f) => ({ ...f, [k]: v }));
+  }
+
+  async function save() {
+    const patch: Record<string, unknown> = {
+      customer_name: form.customer_name.trim() || null,
+      customer_id: form.customer_id.trim() || null,
+      category: form.category,
+      summary: form.summary.trim() || null,
+      service_name: form.service_name.trim() || null,
+      price_per_service: form.price_per_service ? Number(form.price_per_service) : null,
+      agreement_length_months: form.agreement_length_months ? parseInt(form.agreement_length_months, 10) : null,
+      coupon: form.coupon.trim() || null,
+      coupon_value: form.coupon_value.trim() || null,
+      coupon_amount: form.coupon_amount ? Number(form.coupon_amount) : null,
+      follow_up_needed: form.follow_up_needed,
+      follow_up_notes: form.follow_up_needed ? form.follow_up_notes.trim() || null : null,
+      sentiment: form.sentiment.trim() || null,
+      call_date: new Date(form.call_date).toISOString(),
+    };
+    await onSave(patch);
+    setEditing(false);
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm" onClick={onClose}>
       <div
@@ -825,11 +970,109 @@ function DetailDrawer({ log, onClose, onDelete }: { log: Log; onClose: () => voi
               </div>
             </div>
           </div>
-          <button onClick={onClose} className="text-sm text-muted-foreground hover:text-foreground">
-            Close
-          </button>
+          <div className="flex items-center gap-2">
+            {!editing && (
+              <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+                <Pencil className="mr-1.5 h-3.5 w-3.5" /> Edit
+              </Button>
+            )}
+            <button onClick={onClose} className="text-sm text-muted-foreground hover:text-foreground" aria-label="Close">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
+        {editing ? (
+          <div className="mt-6 space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <EditField label="Customer name">
+                <Input value={form.customer_name} onChange={(e) => set("customer_name", e.target.value)} />
+              </EditField>
+              <EditField label="Customer ID">
+                <Input value={form.customer_id} onChange={(e) => set("customer_id", e.target.value)} />
+              </EditField>
+              <EditField label="Category">
+                <select
+                  value={form.category}
+                  onChange={(e) => set("category", e.target.value as Category)}
+                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                >
+                  {(Object.keys(CATEGORY_META) as Category[]).map((c) => (
+                    <option key={c} value={c}>{CATEGORY_META[c].label}</option>
+                  ))}
+                </select>
+              </EditField>
+              <EditField label="Call date">
+                <Popover open={dateOpen} onOpenChange={setDateOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-9 w-full justify-start gap-2 font-normal">
+                      <CalendarIcon className="h-3.5 w-3.5" />
+                      {format(new Date(form.call_date), "MMM d, yyyy")}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-auto p-0 pointer-events-auto">
+                    <Calendar
+                      mode="single"
+                      selected={new Date(form.call_date)}
+                      onSelect={(d) => {
+                        if (d) set("call_date", d.toISOString());
+                        setDateOpen(false);
+                      }}
+                      initialFocus
+                      className="p-3 pointer-events-auto"
+                    />
+                  </PopoverContent>
+                </Popover>
+              </EditField>
+              <EditField label="Service">
+                <Input value={form.service_name} onChange={(e) => set("service_name", e.target.value)} />
+              </EditField>
+              <EditField label="Price / service">
+                <Input inputMode="decimal" value={form.price_per_service} onChange={(e) => set("price_per_service", e.target.value)} />
+              </EditField>
+              <EditField label="Agreement (months)">
+                <Input inputMode="numeric" value={form.agreement_length_months} onChange={(e) => set("agreement_length_months", e.target.value)} />
+              </EditField>
+              <EditField label="Sentiment">
+                <Input value={form.sentiment} onChange={(e) => set("sentiment", e.target.value)} placeholder="positive / neutral / …" />
+              </EditField>
+              <EditField label="Coupon">
+                <Input value={form.coupon} onChange={(e) => set("coupon", e.target.value)} />
+              </EditField>
+              <EditField label="Coupon value">
+                <Input value={form.coupon_value} onChange={(e) => set("coupon_value", e.target.value)} />
+              </EditField>
+              <EditField label="Coupon $ amount">
+                <Input inputMode="decimal" value={form.coupon_amount} onChange={(e) => set("coupon_amount", e.target.value)} />
+              </EditField>
+            </div>
+            <EditField label="Summary">
+              <Textarea value={form.summary} onChange={(e) => set("summary", e.target.value)} className="min-h-[80px]" />
+            </EditField>
+            <div className="rounded-lg border p-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={form.follow_up_needed}
+                  onChange={(e) => set("follow_up_needed", e.target.checked)}
+                />
+                Follow-up needed
+              </label>
+              {form.follow_up_needed && (
+                <Textarea
+                  value={form.follow_up_notes}
+                  onChange={(e) => set("follow_up_notes", e.target.value)}
+                  placeholder="What is pending? Who is following up?"
+                  className="mt-2 min-h-[60px]"
+                />
+              )}
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" onClick={() => setEditing(false)} disabled={saving}>Cancel</Button>
+              <Button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save changes"}</Button>
+            </div>
+          </div>
+        ) : (
         <div className="mt-6 space-y-6">
           <Section title="Summary">
             <p className="text-sm text-foreground/90">{log.summary}</p>
@@ -904,7 +1147,17 @@ function DetailDrawer({ log, onClose, onDelete }: { log: Log; onClose: () => voi
             </Button>
           </div>
         </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+function EditField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
+      {children}
     </div>
   );
 }
