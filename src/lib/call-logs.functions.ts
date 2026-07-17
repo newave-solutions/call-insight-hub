@@ -310,13 +310,13 @@ export const generateInsights = createServerFn({ method: "POST" })
       generateText({
         model,
         system:
-          "You are a retention coach giving a concise DAILY briefing. Use GitHub-flavored MARKDOWN with ## sections, **bold**, and - bullets. Cover: today's totals by category, standout calls, quick wins, and 2-3 tips for tomorrow. Keep under 220 words. Do not wrap in a code fence.",
+          "You are a retention coach for SAELA PEST CONTROL giving a concise DAILY briefing. Evaluate calls through the Saela Way customer-experience values: building value, ownership, empathy, professionalism, and clear communication. Use GitHub-flavored MARKDOWN with ## sections, **bold**, and - bullets. Cover: today's totals by category, standout calls, Saela Way wins & misses (call out where the agent showed ownership/empathy/building value — or missed the chance to), and 2-3 tips for tomorrow. Keep under 240 words. Do not wrap in a code fence.",
         prompt: `Today (${todayKey}) — ${todaysLogs.length} calls:\n${JSON.stringify(todaysLogs, null, 2)}\n\nRecent context (last 30 calls):\n${JSON.stringify(logs.slice(0, 30), null, 2)}`,
       }),
       generateText({
         model,
         system:
-          "You are a retention analyst producing an OVERALL PERFORMANCE REVIEW across the agent's entire logged history. Use GitHub-flavored MARKDOWN with ## headings and - bullets. Sections REQUIRED: `## Trends over time` (call out month-over-month or week-over-week movement), `## Strengths`, `## Weaknesses`, `## Coaching recommendations`. Then a final line exactly: `SCORE: <integer 0-100> — <one-line label>`. Score reflects save rate, resign volume, coupon effectiveness, lead generation, follow-through, and consistency. Under 320 words. Do not wrap in a code fence.",
+          "You are a retention analyst for SAELA PEST CONTROL producing an OVERALL PERFORMANCE REVIEW across the agent's entire logged history. Grade the agent against the Saela Way customer-experience values: **building value**, **ownership**, **empathy**, **professionalism**, and **clear communication** — in addition to hard metrics. Use GitHub-flavored MARKDOWN with ## headings and - bullets. Sections REQUIRED: `## Trends over time` (month-over-month or week-over-week movement), `## Saela Way scorecard` (one bullet per value: building value, ownership, empathy, professionalism, communication — each with a short assessment and evidence from the notes), `## Strengths`, `## Weaknesses`, `## Coaching recommendations`. Then a final line exactly: `SCORE: <integer 0-100> — <one-line label>`. Score blends save rate, resign volume, coupon effectiveness, lead generation, follow-through, consistency AND Saela Way behavior. Under 360 words. Do not wrap in a code fence.",
         prompt: `Full history (${logs.length} calls):\n${JSON.stringify(logs, null, 2)}`,
       }),
     ]);
