@@ -276,7 +276,7 @@ function Dashboard() {
     return logs.filter((l) => {
       if (filter !== "all" && l.category !== filter) return false;
       if (dayKey) {
-        const k = new Date(l.call_date ?? l.created_at).toISOString().slice(0, 10);
+        const k = toDayKey(new Date(l.call_date ?? l.created_at));
         if (k !== dayKey) return false;
       }
       if (!q) return true;
@@ -292,7 +292,7 @@ function Dashboard() {
 
   const daysWithLogs = useMemo(() => {
     const s = new Set<string>();
-    for (const l of logs) s.add(new Date(l.call_date ?? l.created_at).toISOString().slice(0, 10));
+    for (const l of logs) s.add(toDayKey(new Date(l.call_date ?? l.created_at)));
     return s;
   }, [logs]);
 
