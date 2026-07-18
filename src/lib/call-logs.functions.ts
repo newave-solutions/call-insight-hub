@@ -291,6 +291,7 @@ const UpdateSchema = z.object({
       customer_name: z.string().nullish(),
       customer_id: z.string().nullish(),
       category: z.enum(["saved", "closed", "resign", "lead", "cancel_pending", "other"]).optional(),
+      categories: z.array(z.enum(["saved", "closed", "resign", "lead", "cancel_pending", "other"])).optional(),
       summary: z.string().nullish(),
       service_name: z.string().nullish(),
       price_per_service: z.number().nullish(),
