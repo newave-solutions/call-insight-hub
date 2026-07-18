@@ -313,6 +313,11 @@ export const updateCallLog = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const patch: import("@/integrations/supabase/types").TablesUpdate<"call_logs"> = { ...data.patch };
     if (patch.follow_up_needed === false) patch.follow_up_notes = null;
+    if (Array.isArray(patch.categories) && patch.categories.length > 0) {
+      patch.category = patch.categories[0];
+    } else if (patch.category && !patch.categories) {
+      patch.categories = [patch.category];
+    }
     if (typeof patch.call_date === "string" && patch.call_date) {
       patch.date_source = "user_selected";
     }
