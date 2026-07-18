@@ -835,9 +835,10 @@ function EmptyChart() {
 type Log = Awaited<ReturnType<typeof listCallLogs>>[number];
 
 function LogRow({ log, onSelect, onDelete }: { log: Log; onSelect: () => void; onDelete: () => void }) {
-  const meta = CATEGORY_META[log.category as Category];
+  const cats = logCategories(log);
+  const primary = CATEGORY_META[(cats[0] ?? "other") as Category];
   const details =
-    log.category === "resign"
+    cats.includes("resign")
       ? [
           log.service_name,
           log.price_per_service != null ? `$${log.price_per_service}/svc` : null,
@@ -855,10 +856,20 @@ function LogRow({ log, onSelect, onDelete }: { log: Log; onSelect: () => void; o
         {log.customer_id || "—"}
       </TableCell>
       <TableCell className="py-2">
-        <span className={cn("inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[10px] font-medium uppercase", meta.color)}>
-          <span className={cn("h-1.5 w-1.5 rounded-full", meta.dot)} />
-          {meta.label}
-        </span>
+        <div className="flex flex-wrap gap-1">
+          {cats.map((c, i) => {
+            const m = CATEGORY_META[c];
+            return (
+              <span key={`${c}-${i}`} className={cn("inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase", m.color)}>
+                <span className={cn("h-1.5 w-1.5 rounded-full", m.dot)} />
+                {m.label}
+              </span>
+            );
+          })}
+          {cats.length > 1 && (
+            <span className="rounded-md bg-primary/10 px-1 py-0.5 text-[9px] font-bold uppercase text-primary">×{cats.length}</span>
+          )}
+        </div>
       </TableCell>
       <TableCell className="max-w-[280px] py-2 text-muted-foreground">
         <div className="line-clamp-1">{details || "—"}</div>
