@@ -836,7 +836,6 @@ type Log = Awaited<ReturnType<typeof listCallLogs>>[number];
 
 function LogRow({ log, onSelect, onDelete }: { log: Log; onSelect: () => void; onDelete: () => void }) {
   const cats = logCategories(log);
-  const primary = CATEGORY_META[(cats[0] ?? "other") as Category];
   const details =
     cats.includes("resign")
       ? [
