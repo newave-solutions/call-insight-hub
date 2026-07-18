@@ -214,8 +214,9 @@ function Dashboard() {
       agreementCount: 0,
     };
     for (const l of logs) {
-      t[l.category as Category] += 1;
-      if (l.category === "resign" && l.price_per_service && l.agreement_length_months) {
+      const cats = logCategories(l);
+      for (const c of cats) t[c] += 1;
+      if (cats.includes("resign") && l.price_per_service && l.agreement_length_months) {
         t.revenue += Number(l.price_per_service) * l.agreement_length_months;
       }
       if (l.agreement_length_months) {
@@ -268,20 +269,46 @@ function Dashboard() {
       const key = new Date(l.call_date ?? l.created_at).toISOString().slice(0, 10);
       const e = map.get(key);
       if (!e) continue;
-      if (l.category === "saved") e.saved += 1;
-      else if (l.category === "closed") e.closed += 1;
-      else if (l.category === "resign") e.resign += 1;
+      for (const c of logCategories(l)) {
+        if (c === "saved") e.saved += 1;
+        else if (c === "closed") e.closed += 1;
+        else if (c === "resign") e.resign += 1;
+      }
       if (l.coupon_amount) e.coupons += Number(l.coupon_amount);
       else if (l.coupon) e.coupons += 1;
     }
     return days;
   }, [logs]);
 
+  // Per-day tally across ALL history — for the Daily Totals tracker.
+  const dailyTotals = useMemo(() => {
+    const map = new Map<string, {
+      key: string; date: Date; total: number;
+      saved: number; closed: number; resign: number; lead: number; cancel_pending: number; other: number;
+      coupons: number; followUps: number;
+    }>();
+    for (const l of logs) {
+      const d = new Date(l.call_date ?? l.created_at);
+      const key = toDayKey(d);
+      let e = map.get(key);
+      if (!e) {
+        e = { key, date: new Date(d.getFullYear(), d.getMonth(), d.getDate()), total: 0,
+          saved: 0, closed: 0, resign: 0, lead: 0, cancel_pending: 0, other: 0, coupons: 0, followUps: 0 };
+        map.set(key, e);
+      }
+      e.total += 1;
+      for (const c of logCategories(l)) e[c] += 1;
+      if (l.coupon_amount) e.coupons += Number(l.coupon_amount);
+      if (l.follow_up_needed) e.followUps += 1;
+    }
+    return Array.from(map.values()).sort((a, b) => b.date.getTime() - a.date.getTime());
+  }, [logs]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const dayKey = dayFilter ? toDayKey(dayFilter) : null;
     return logs.filter((l) => {
-      if (filter !== "all" && l.category !== filter) return false;
+      if (filter !== "all" && !logCategories(l).includes(filter)) return false;
       if (dayKey) {
         const k = toDayKey(new Date(l.call_date ?? l.created_at));
         if (k !== dayKey) return false;
