@@ -18,6 +18,7 @@ export type Database = {
         Row: {
           agreement_length_months: number | null
           call_date: string | null
+          categories: string[]
           category: string
           coupon: string | null
           coupon_amount: number | null
@@ -41,6 +42,7 @@ export type Database = {
         Insert: {
           agreement_length_months?: number | null
           call_date?: string | null
+          categories?: string[]
           category: string
           coupon?: string | null
           coupon_amount?: number | null
@@ -64,6 +66,7 @@ export type Database = {
         Update: {
           agreement_length_months?: number | null
           call_date?: string | null
+          categories?: string[]
           category?: string
           coupon?: string | null
           coupon_amount?: number | null
