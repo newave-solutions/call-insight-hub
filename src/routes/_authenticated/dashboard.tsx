@@ -723,6 +723,15 @@ function Dashboard() {
             )}
           </aside>
         </section>
+
+        {/* Daily totals tracker */}
+        <section className="mt-4">
+          <DailyTotalsTracker
+            rows={dailyTotals}
+            selected={dayFilter}
+            onSelect={(d) => setDayFilter(d)}
+          />
+        </section>
       </main>
 
       <ImportDialog
