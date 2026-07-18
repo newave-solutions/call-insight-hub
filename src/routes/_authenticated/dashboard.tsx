@@ -1264,6 +1264,88 @@ function ScoreCard({ score, label }: { score: number; label: string }) {
   );
 }
 
+type DailyRow = {
+  key: string; date: Date; total: number;
+  saved: number; closed: number; resign: number; lead: number; cancel_pending: number; other: number;
+  coupons: number; followUps: number;
+};
+
+function DailyTotalsTracker({
+  rows,
+  selected,
+  onSelect,
+}: {
+  rows: DailyRow[];
+  selected: Date | null;
+  onSelect: (d: Date | null) => void;
+}) {
+  const selKey = selected ? toDayKey(selected) : null;
+  return (
+    <div className="rounded-xl border bg-card shadow-sm">
+      <div className="flex items-center justify-between border-b px-3 py-2">
+        <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <CalendarDays className="h-3.5 w-3.5 text-primary" /> Daily totals
+          <span className="ml-1.5 text-muted-foreground/60">{rows.length}</span>
+        </h2>
+        <p className="hidden text-[10px] text-muted-foreground sm:block">Click any day to filter the call log above.</p>
+      </div>
+      {rows.length === 0 ? (
+        <div className="p-6 text-center text-xs text-muted-foreground">No days logged yet.</div>
+      ) : (
+        <div className="max-h-[360px] overflow-auto">
+          <Table>
+            <TableHeader className="sticky top-0 z-[1] bg-card">
+              <TableRow className="text-[10px] uppercase">
+                <TableHead className="h-8">Day</TableHead>
+                <TableHead className="h-8 text-right">Total</TableHead>
+                <TableHead className="h-8 text-right">Saved</TableHead>
+                <TableHead className="h-8 text-right">Closed</TableHead>
+                <TableHead className="h-8 text-right">Resign</TableHead>
+                <TableHead className="h-8 text-right">Lead</TableHead>
+                <TableHead className="h-8 text-right">Cancel Pnd</TableHead>
+                <TableHead className="h-8 text-right">Other</TableHead>
+                <TableHead className="h-8 text-right">Coupons $</TableHead>
+                <TableHead className="h-8 text-right">Follow-ups</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((r) => {
+                const isSel = selKey === r.key;
+                const isToday = r.key === toDayKey(new Date());
+                return (
+                  <TableRow
+                    key={r.key}
+                    onClick={() => onSelect(isSel ? null : r.date)}
+                    className={cn("cursor-pointer text-xs", isSel && "bg-primary/10 hover:bg-primary/15")}
+                  >
+                    <TableCell className="py-2 font-medium">
+                      <div className="flex items-center gap-2">
+                        <span>{r.date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span>
+                        {isToday && (
+                          <span className="rounded bg-emerald-500/15 px-1 py-0.5 text-[9px] font-semibold uppercase text-emerald-700">Today</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="py-2 text-right font-semibold tabular-nums">{r.total}</TableCell>
+                    <TableCell className={cn("py-2 text-right tabular-nums", r.saved > 0 && "font-semibold text-emerald-600")}>{r.saved || "—"}</TableCell>
+                    <TableCell className={cn("py-2 text-right tabular-nums", r.closed > 0 && "font-semibold text-rose-600")}>{r.closed || "—"}</TableCell>
+                    <TableCell className={cn("py-2 text-right tabular-nums", r.resign > 0 && "font-semibold text-blue-600")}>{r.resign || "—"}</TableCell>
+                    <TableCell className={cn("py-2 text-right tabular-nums", r.lead > 0 && "font-semibold text-amber-600")}>{r.lead || "—"}</TableCell>
+                    <TableCell className={cn("py-2 text-right tabular-nums", r.cancel_pending > 0 && "font-semibold text-orange-600")}>{r.cancel_pending || "—"}</TableCell>
+                    <TableCell className="py-2 text-right tabular-nums text-muted-foreground">{r.other || "—"}</TableCell>
+                    <TableCell className="py-2 text-right tabular-nums text-purple-600">{r.coupons ? `$${r.coupons.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}</TableCell>
+                    <TableCell className="py-2 text-right tabular-nums text-amber-700">{r.followUps || "—"}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ImportDialog({
   open,
   onOpenChange,
