@@ -89,6 +89,13 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 
 type Category = "saved" | "closed" | "resign" | "lead" | "cancel_pending" | "other";
 
+const ALL_CATEGORIES: Category[] = ["saved", "closed", "resign", "lead", "cancel_pending", "other"];
+
+function logCategories(l: { categories?: string[] | null; category: string }): Category[] {
+  const arr = Array.isArray(l.categories) && l.categories.length > 0 ? l.categories : [l.category];
+  return arr.filter((c): c is Category => (ALL_CATEGORIES as string[]).includes(c));
+}
+
 function toDayKey(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
