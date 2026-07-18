@@ -132,16 +132,21 @@ async function runExtraction(notes: string): Promise<Analysis> {
   const model = getModel();
   try {
     const res = await generateObject({ model, schema: AnalysisSchema, system: SYSTEM_PROMPT, prompt: `Call notes:\n\n${notes}` });
-    return res.object;
+    return normalize(res.object);
   } catch (err) {
     if (NoObjectGeneratedError.isInstance(err)) {
       const raw = (err as { text?: string }).text ?? "";
       const match = raw.match(/\{[\s\S]*\}/);
       const parsed = match ? safeJson(match[0]) : null;
-      return AnalysisSchema.parse(parsed ?? {});
+      return normalize(AnalysisSchema.parse(parsed ?? {}));
     }
     throw err;
   }
+}
+
+function normalize(a: Analysis): Analysis {
+  const cats = Array.isArray(a.categories) && a.categories.length > 0 ? a.categories : [a.category];
+  return { ...a, categories: cats, category: cats[0] };
 }
 
 function safeJson(s: string): unknown {
