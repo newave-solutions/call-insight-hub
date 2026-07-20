@@ -8,11 +8,19 @@ const AnalysisSchema = z.object({
   // A single call can have multiple outcomes (e.g. one save + one resign, or two closes on a
   // multi-subscription household). Always return at least one entry.
   categories: z
-    .array(z.enum(["saved", "closed", "resign", "lead", "cancel_pending", "other"]))
+    .array(z.enum([
+      "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
+      "reschedule", "reservice", "payment", "billing_update", "freeze", "refund",
+      "back_on_schedule", "other",
+    ]))
     .nullish()
     .default([]),
   // Primary outcome — first/most prominent one — kept for backward compatibility & display.
-  category: z.enum(["saved", "closed", "resign", "lead", "cancel_pending", "other"]).default("other"),
+  category: z.enum([
+    "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
+    "reschedule", "reservice", "payment", "billing_update", "freeze", "refund",
+    "back_on_schedule", "other",
+  ]).default("other"),
   customer_name: z.string().nullish().default(null),
   customer_id: z.string().nullish().default(null),
   summary: z.string().nullish().default(""),
@@ -22,6 +30,10 @@ const AnalysisSchema = z.object({
   coupon: z.string().nullish().default(null),
   coupon_value: z.string().nullish().default(null),
   coupon_amount: z.number().nullish().default(null),
+  // CES commission tracking — payment collected on the call (outstanding balance cleared).
+  payment_amount: z.number().nullish().default(null),
+  // Refunds granted on the call.
+  refund_amount: z.number().nullish().default(null),
   follow_up_needed: z.boolean().nullish().default(false),
   follow_up_notes: z.string().nullish().default(null),
   sentiment: z.string().nullish().default(null),
