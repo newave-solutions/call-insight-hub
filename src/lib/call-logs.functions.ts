@@ -320,14 +320,20 @@ export const deleteCallLog = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+const CategoryEnum = z.enum([
+  "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
+  "reschedule", "reservice", "payment", "billing_update", "freeze", "refund",
+  "back_on_schedule", "other",
+]);
+
 const UpdateSchema = z.object({
   id: z.string().uuid(),
   patch: z
     .object({
       customer_name: z.string().nullish(),
       customer_id: z.string().nullish(),
-      category: z.enum(["saved", "closed", "resign", "lead", "cancel_pending", "other"]).optional(),
-      categories: z.array(z.enum(["saved", "closed", "resign", "lead", "cancel_pending", "other"])).optional(),
+      category: CategoryEnum.optional(),
+      categories: z.array(CategoryEnum).optional(),
       summary: z.string().nullish(),
       service_name: z.string().nullish(),
       price_per_service: z.number().nullish(),
@@ -335,6 +341,8 @@ const UpdateSchema = z.object({
       coupon: z.string().nullish(),
       coupon_value: z.string().nullish(),
       coupon_amount: z.number().nullish(),
+      payment_amount: z.number().nullish(),
+      refund_amount: z.number().nullish(),
       follow_up_needed: z.boolean().optional(),
       follow_up_notes: z.string().nullish(),
       sentiment: z.string().nullish(),
