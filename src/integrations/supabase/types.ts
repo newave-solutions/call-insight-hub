@@ -31,8 +31,10 @@ export type Database = {
           follow_up_notes: string | null
           id: string
           key_points: Json | null
+          payment_amount: number | null
           price_per_service: number | null
           raw_notes: string
+          refund_amount: number | null
           sentiment: string | null
           service_name: string | null
           summary: string | null
@@ -55,8 +57,10 @@ export type Database = {
           follow_up_notes?: string | null
           id?: string
           key_points?: Json | null
+          payment_amount?: number | null
           price_per_service?: number | null
           raw_notes: string
+          refund_amount?: number | null
           sentiment?: string | null
           service_name?: string | null
           summary?: string | null
@@ -79,11 +83,34 @@ export type Database = {
           follow_up_notes?: string | null
           id?: string
           key_points?: Json | null
+          payment_amount?: number | null
           price_per_service?: number | null
           raw_notes?: string
+          refund_amount?: number | null
           sentiment?: string | null
           service_name?: string | null
           summary?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_settings: {
+        Row: {
+          created_at: string
+          role: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          role?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          role?: string
           updated_at?: string
           user_id?: string
         }

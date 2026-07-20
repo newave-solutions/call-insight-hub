@@ -5,9 +5,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   analyzeAndSaveCallLog,
   bulkImportCallLogs,
+  createManualCallLog,
   deleteCallLog,
   generateInsights,
+  getUserSettings,
   listCallLogs,
+  setUserRole,
   updateCallLog,
 } from "@/lib/call-logs.functions";
 import { supabase } from "@/integrations/supabase/client";
@@ -72,6 +75,15 @@ import {
   TrendingUp,
   Trash2,
   Upload,
+  Plus,
+  RefreshCw,
+  Wallet,
+  Undo2,
+  Snowflake,
+  ClipboardList,
+  Wrench,
+  CreditCard,
+  UserCog,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
@@ -87,9 +99,20 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
   }),
 });
 
-type Category = "saved" | "closed" | "resign" | "lead" | "cancel_pending" | "other";
+type Category =
+  | "saved" | "closed" | "resign" | "reactivation" | "lead"
+  | "cancel_pending" | "pending_cancel"
+  | "reschedule" | "reservice" | "payment" | "billing_update"
+  | "freeze" | "refund" | "back_on_schedule" | "other";
 
-const ALL_CATEGORIES: Category[] = ["saved", "closed", "resign", "lead", "cancel_pending", "other"];
+const ALL_CATEGORIES: Category[] = [
+  "saved", "closed", "resign", "reactivation", "lead",
+  "cancel_pending", "pending_cancel",
+  "reschedule", "reservice", "payment", "billing_update",
+  "freeze", "refund", "back_on_schedule", "other",
+];
+
+type Role = "ces" | "cem";
 
 function logCategories(l: { categories?: string[] | null; category: string }): Category[] {
   const arr = Array.isArray(l.categories) && l.categories.length > 0 ? l.categories : [l.category];
@@ -110,9 +133,24 @@ const CATEGORY_META: Record<
   saved: { label: "Saved", icon: Shield, color: "text-emerald-600 bg-emerald-500/10", dot: "bg-emerald-500", hex: "#10b981" },
   closed: { label: "Closed", icon: Ban, color: "text-rose-600 bg-rose-500/10", dot: "bg-rose-500", hex: "#f43f5e" },
   resign: { label: "Resign", icon: FileSignature, color: "text-blue-600 bg-blue-500/10", dot: "bg-blue-500", hex: "#3b82f6" },
+  reactivation: { label: "Reactivation", icon: RefreshCw, color: "text-cyan-600 bg-cyan-500/10", dot: "bg-cyan-500", hex: "#06b6d4" },
   lead: { label: "Lead", icon: TrendingUp, color: "text-amber-600 bg-amber-500/10", dot: "bg-amber-500", hex: "#f59e0b" },
   cancel_pending: { label: "Cancel Pending", icon: CalendarClock, color: "text-orange-600 bg-orange-500/10", dot: "bg-orange-500", hex: "#f97316" },
+  pending_cancel: { label: "Pending Cancel (Doc)", icon: ClipboardList, color: "text-red-600 bg-red-500/10", dot: "bg-red-500", hex: "#dc2626" },
+  reschedule: { label: "Reschedule", icon: CalendarClock, color: "text-indigo-600 bg-indigo-500/10", dot: "bg-indigo-500", hex: "#6366f1" },
+  reservice: { label: "Re-service", icon: Wrench, color: "text-teal-600 bg-teal-500/10", dot: "bg-teal-500", hex: "#14b8a6" },
+  payment: { label: "Payment", icon: Wallet, color: "text-emerald-700 bg-emerald-600/10", dot: "bg-emerald-600", hex: "#059669" },
+  billing_update: { label: "Billing Update", icon: CreditCard, color: "text-sky-600 bg-sky-500/10", dot: "bg-sky-500", hex: "#0ea5e9" },
+  freeze: { label: "Freeze", icon: Snowflake, color: "text-blue-500 bg-blue-400/10", dot: "bg-blue-400", hex: "#60a5fa" },
+  refund: { label: "Refund", icon: Undo2, color: "text-fuchsia-600 bg-fuchsia-500/10", dot: "bg-fuchsia-500", hex: "#c026d3" },
+  back_on_schedule: { label: "Back on Schedule", icon: RefreshCw, color: "text-slate-600 bg-slate-500/10", dot: "bg-slate-500", hex: "#64748b" },
   other: { label: "Other", icon: MessageSquare, color: "text-muted-foreground bg-muted", dot: "bg-muted-foreground/60", hex: "#94a3b8" },
+};
+
+// Which category chips get top-of-page KPI cards per role.
+const KPI_BY_ROLE: Record<Role, Category[]> = {
+  cem: ["saved", "closed", "resign", "lead", "cancel_pending", "pending_cancel", "reactivation", "reschedule"],
+  ces: ["reschedule", "reservice", "payment", "billing_update", "refund", "resign", "lead", "freeze"],
 };
 
 function Dashboard() {
@@ -127,6 +165,7 @@ function Dashboard() {
 
   const [notes, setNotes] = useState("");
   const [filter, setFilter] = useState<Category | "all">("all");
+  const [role] = useState<Role>("cem");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [callDate, setCallDate] = useState<Date>(new Date());
@@ -199,24 +238,22 @@ function Dashboard() {
   });
 
   const stats = useMemo(() => {
+    const cats = Object.fromEntries(ALL_CATEGORIES.map((c) => [c, 0])) as Record<Category, number>;
     const t = {
-      saved: 0,
-      closed: 0,
-      resign: 0,
-      lead: 0,
-      cancel_pending: 0,
-      other: 0,
+      ...cats,
       revenue: 0,
       couponsUsed: 0,
       couponTotal: 0,
+      paymentTotal: 0,
+      refundTotal: 0,
       followUps: 0,
       agreementSum: 0,
       agreementCount: 0,
     };
     for (const l of logs) {
-      const cats = logCategories(l);
-      for (const c of cats) t[c] += 1;
-      if (cats.includes("resign") && l.price_per_service && l.agreement_length_months) {
+      const lcats = logCategories(l);
+      for (const c of lcats) t[c] += 1;
+      if (lcats.includes("resign") && l.price_per_service && l.agreement_length_months) {
         t.revenue += Number(l.price_per_service) * l.agreement_length_months;
       }
       if (l.agreement_length_months) {
@@ -225,6 +262,8 @@ function Dashboard() {
       }
       if (l.coupon || l.coupon_amount) t.couponsUsed += 1;
       if (l.coupon_amount) t.couponTotal += Number(l.coupon_amount);
+      if (l.payment_amount) t.paymentTotal += Number(l.payment_amount);
+      if (l.refund_amount) t.refundTotal += Number(l.refund_amount);
       if (l.follow_up_needed) t.followUps += 1;
     }
     return t;
@@ -282,23 +321,31 @@ function Dashboard() {
 
   // Per-day tally across ALL history — for the Daily Totals tracker.
   const dailyTotals = useMemo(() => {
-    const map = new Map<string, {
+    type Row = {
       key: string; date: Date; total: number;
-      saved: number; closed: number; resign: number; lead: number; cancel_pending: number; other: number;
-      coupons: number; followUps: number;
-    }>();
+      cats: Record<Category, number>;
+      coupons: number; payments: number; refunds: number; followUps: number;
+    };
+    const map = new Map<string, Row>();
     for (const l of logs) {
       const d = new Date(l.call_date ?? l.created_at);
       const key = toDayKey(d);
       let e = map.get(key);
       if (!e) {
-        e = { key, date: new Date(d.getFullYear(), d.getMonth(), d.getDate()), total: 0,
-          saved: 0, closed: 0, resign: 0, lead: 0, cancel_pending: 0, other: 0, coupons: 0, followUps: 0 };
+        e = {
+          key,
+          date: new Date(d.getFullYear(), d.getMonth(), d.getDate()),
+          total: 0,
+          cats: Object.fromEntries(ALL_CATEGORIES.map((c) => [c, 0])) as Record<Category, number>,
+          coupons: 0, payments: 0, refunds: 0, followUps: 0,
+        };
         map.set(key, e);
       }
       e.total += 1;
-      for (const c of logCategories(l)) e[c] += 1;
+      for (const c of logCategories(l)) e.cats[c] += 1;
       if (l.coupon_amount) e.coupons += Number(l.coupon_amount);
+      if (l.payment_amount) e.payments += Number(l.payment_amount);
+      if (l.refund_amount) e.refunds += Number(l.refund_amount);
       if (l.follow_up_needed) e.followUps += 1;
     }
     return Array.from(map.values()).sort((a, b) => b.date.getTime() - a.date.getTime());
@@ -730,6 +777,7 @@ function Dashboard() {
             rows={dailyTotals}
             selected={dayFilter}
             onSelect={(d) => setDayFilter(d)}
+            role={role}
           />
         </section>
       </main>
@@ -1266,20 +1314,25 @@ function ScoreCard({ score, label }: { score: number; label: string }) {
 
 type DailyRow = {
   key: string; date: Date; total: number;
-  saved: number; closed: number; resign: number; lead: number; cancel_pending: number; other: number;
-  coupons: number; followUps: number;
+  cats: Record<Category, number>;
+  coupons: number; payments: number; refunds: number; followUps: number;
 };
 
 function DailyTotalsTracker({
   rows,
   selected,
   onSelect,
+  role,
 }: {
   rows: DailyRow[];
   selected: Date | null;
   onSelect: (d: Date | null) => void;
+  role: Role;
 }) {
   const selKey = selected ? toDayKey(selected) : null;
+  const cols: Category[] = role === "cem"
+    ? ["saved", "closed", "resign", "lead", "cancel_pending", "pending_cancel"]
+    : ["reschedule", "reservice", "payment", "billing_update", "refund", "resign"];
   return (
     <div className="rounded-xl border bg-card shadow-sm">
       <div className="flex items-center justify-between border-b px-3 py-2">
@@ -1298,13 +1351,12 @@ function DailyTotalsTracker({
               <TableRow className="text-[10px] uppercase">
                 <TableHead className="h-8">Day</TableHead>
                 <TableHead className="h-8 text-right">Total</TableHead>
-                <TableHead className="h-8 text-right">Saved</TableHead>
-                <TableHead className="h-8 text-right">Closed</TableHead>
-                <TableHead className="h-8 text-right">Resign</TableHead>
-                <TableHead className="h-8 text-right">Lead</TableHead>
-                <TableHead className="h-8 text-right">Cancel Pnd</TableHead>
-                <TableHead className="h-8 text-right">Other</TableHead>
+                {cols.map((c) => (
+                  <TableHead key={c} className="h-8 text-right">{CATEGORY_META[c].label}</TableHead>
+                ))}
                 <TableHead className="h-8 text-right">Coupons $</TableHead>
+                {role === "ces" && <TableHead className="h-8 text-right">Payments $</TableHead>}
+                {role === "ces" && <TableHead className="h-8 text-right">Refunds $</TableHead>}
                 <TableHead className="h-8 text-right">Follow-ups</TableHead>
               </TableRow>
             </TableHeader>
@@ -1327,13 +1379,14 @@ function DailyTotalsTracker({
                       </div>
                     </TableCell>
                     <TableCell className="py-2 text-right font-semibold tabular-nums">{r.total}</TableCell>
-                    <TableCell className={cn("py-2 text-right tabular-nums", r.saved > 0 && "font-semibold text-emerald-600")}>{r.saved || "—"}</TableCell>
-                    <TableCell className={cn("py-2 text-right tabular-nums", r.closed > 0 && "font-semibold text-rose-600")}>{r.closed || "—"}</TableCell>
-                    <TableCell className={cn("py-2 text-right tabular-nums", r.resign > 0 && "font-semibold text-blue-600")}>{r.resign || "—"}</TableCell>
-                    <TableCell className={cn("py-2 text-right tabular-nums", r.lead > 0 && "font-semibold text-amber-600")}>{r.lead || "—"}</TableCell>
-                    <TableCell className={cn("py-2 text-right tabular-nums", r.cancel_pending > 0 && "font-semibold text-orange-600")}>{r.cancel_pending || "—"}</TableCell>
-                    <TableCell className="py-2 text-right tabular-nums text-muted-foreground">{r.other || "—"}</TableCell>
+                    {cols.map((c) => (
+                      <TableCell key={c} className={cn("py-2 text-right tabular-nums", r.cats[c] > 0 && "font-semibold")} style={r.cats[c] > 0 ? { color: CATEGORY_META[c].hex } : undefined}>
+                        {r.cats[c] || "—"}
+                      </TableCell>
+                    ))}
                     <TableCell className="py-2 text-right tabular-nums text-purple-600">{r.coupons ? `$${r.coupons.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}</TableCell>
+                    {role === "ces" && <TableCell className="py-2 text-right tabular-nums text-emerald-700">{r.payments ? `$${r.payments.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}</TableCell>}
+                    {role === "ces" && <TableCell className="py-2 text-right tabular-nums text-fuchsia-600">{r.refunds ? `$${r.refunds.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}</TableCell>}
                     <TableCell className="py-2 text-right tabular-nums text-amber-700">{r.followUps || "—"}</TableCell>
                   </TableRow>
                 );

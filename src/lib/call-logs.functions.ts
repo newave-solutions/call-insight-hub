@@ -8,11 +8,19 @@ const AnalysisSchema = z.object({
   // A single call can have multiple outcomes (e.g. one save + one resign, or two closes on a
   // multi-subscription household). Always return at least one entry.
   categories: z
-    .array(z.enum(["saved", "closed", "resign", "lead", "cancel_pending", "other"]))
+    .array(z.enum([
+      "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
+      "reschedule", "reservice", "payment", "billing_update", "freeze", "refund",
+      "back_on_schedule", "other",
+    ]))
     .nullish()
     .default([]),
   // Primary outcome — first/most prominent one — kept for backward compatibility & display.
-  category: z.enum(["saved", "closed", "resign", "lead", "cancel_pending", "other"]).default("other"),
+  category: z.enum([
+    "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
+    "reschedule", "reservice", "payment", "billing_update", "freeze", "refund",
+    "back_on_schedule", "other",
+  ]).default("other"),
   customer_name: z.string().nullish().default(null),
   customer_id: z.string().nullish().default(null),
   summary: z.string().nullish().default(""),
@@ -22,6 +30,10 @@ const AnalysisSchema = z.object({
   coupon: z.string().nullish().default(null),
   coupon_value: z.string().nullish().default(null),
   coupon_amount: z.number().nullish().default(null),
+  // CES commission tracking — payment collected on the call (outstanding balance cleared).
+  payment_amount: z.number().nullish().default(null),
+  // Refunds granted on the call.
+  refund_amount: z.number().nullish().default(null),
   follow_up_needed: z.boolean().nullish().default(false),
   follow_up_notes: z.string().nullish().default(null),
   sentiment: z.string().nullish().default(null),
@@ -39,6 +51,11 @@ function getModel() {
 }
 
 const SYSTEM_PROMPT = `You read customer service / retention call notes for SAELA PEST CONTROL and extract structured data.
+
+ROLES using this app:
+- CEM (Customer Experience Manager) — retention focus: saves vs closes, resigns, leads, cancel_pending, pending_cancel, coupons.
+- CES (Customer Experience Specialist) — service focus: reschedules, free re-services (no charge), building value, resigns, leads, updating billing information, taking payments on outstanding balances, refunds.
+Categorize the call using ANY category — do not default to "other" just because you're unsure. Pick every applicable outcome from the list below. Only use "other" as an absolute last resort.
 
 DOMAIN — Saela Pest Control services (shorthand you WILL see):
 - PP = Protection Program
@@ -66,12 +83,21 @@ Branches / regions (Kansas, Kansas East, Kansas West, Utah, Utah Central, Portla
 Example note line: "1585346 PPEOM / Patrick Blue / Dallas / RS scheduled for 07/03"
  -> customer_id "1585346", customer_name "Patrick Blue", service_name "Protection Program Every Other Month", branch mention "Dallas", RS scheduled for 07/03.
 
-Category (pick exactly one):
+Categories — pick every outcome that applies (the same call can have several):
 - "saved": customer wanted to cancel but was retained.
 - "closed": account/subscription was closed or canceled.
 - "resign": customer signed a new agreement or renewed with new terms.
+- "reactivation": a previously closed/cancelled account was reactivated / restarted.
 - "lead": call was sent to Inside Sales for new subscription, upsell, or new service.
-- "cancel_pending": cancellation is pending / not yet finalized (also "Pending Cancel"). Use this when the customer has requested cancellation but a decision, effective date, or final step is still outstanding.
+- "cancel_pending": the customer said on THIS call that they'll take the next service and then cancel — cancellation is scheduled/pending after the next visit.
+- "pending_cancel": the account was flagged as pending cancel on the retention doc BEFORE this call, and the agent is following up to offer options. If the notes mention "from the doc", "the doc", "retention doc", or list the customer as an existing pending cancel, use this — NOT cancel_pending.
+- "reschedule": a service was rescheduled or scheduled (new appointment date).
+- "reservice": a free re-service was scheduled between regular services (no charge to customer).
+- "payment": a payment / outstanding balance was taken on the call. Populate payment_amount with the dollar amount collected (numeric).
+- "billing_update": billing information (card, address, autopay) was updated. If a payment was ALSO taken, include BOTH "billing_update" and "payment".
+- "freeze": account was frozen / paused (e.g. seasonal freeze).
+- "refund": a refund was issued to the customer. Populate refund_amount with the refunded dollar amount (numeric).
+- "back_on_schedule": customer was on "the doc" and could not be reached after 3 attempts, so they were placed back on regular schedule. Notes may say "transferred from the doc", "back on schedule", "put back on schedule".
 - "other": general inquiry, complaint, info call, etc.
 
 MULTI-OUTCOME CALLS (CRITICAL — do not skip):
@@ -83,6 +109,10 @@ Return every outcome in the "categories" array, in the order they occurred. Also
 - Two subscriptions both saved. -> categories: ["saved","saved"], category: "saved".
 - Agent saves the customer AND signs a new agreement on the same call. -> categories: ["saved","resign"], category: "resign" (resign leads if it happened; otherwise "saved"). Both count for commission.
 - Save + lead sent to Inside Sales for additional service -> categories: ["saved","lead"].
+- Billing card updated + payment of $185 taken on outstanding balance -> categories: ["billing_update","payment"], payment_amount: 185.
+- Reschedule + free re-service scheduled -> categories: ["reschedule","reservice"].
+- Pending cancel from the doc, agent offered freeze -> categories: ["pending_cancel","freeze"].
+- Customer refunded $60 and rescheduled -> categories: ["refund","reschedule"], refund_amount: 60.
 If only one outcome occurred, return a single-element array.
 
 COUPONS / DISCOUNTS / FREE SERVICES (they are the same thing):
@@ -106,6 +136,8 @@ Extract when discussed:
 - price_per_service (number; null if not stated)
 - service_name (expand any shorthand to full Saela service name)
 - coupon (code/name), coupon_value (human readable e.g. "50% off next service"), coupon_amount (dollar number; "50% off" of a $120 service = 60; "$25 off" = 25; 0 if no discount)
+- payment_amount: dollars collected on this call for an outstanding balance / past-due payment. Only set when a payment was actually taken.
+- refund_amount: dollars refunded to the customer on this call. Only set when a refund was actually issued.
 - sentiment ("positive"/"neutral"/"negative"/"frustrated"/"happy")
 - summary (2-3 sentences; reflect the Resolution/Result, not the copilot summary if they disagree)
 - key_points (3-6 short bullets)
@@ -191,6 +223,8 @@ export const analyzeAndSaveCallLog = createServerFn({ method: "POST" })
         coupon: output.coupon,
         coupon_value: output.coupon_value,
         coupon_amount: output.coupon_amount,
+        payment_amount: output.payment_amount,
+        refund_amount: output.refund_amount,
         follow_up_needed: output.follow_up_needed ?? false,
         follow_up_notes: (output.follow_up_needed ?? false) ? output.follow_up_notes : null,
         sentiment: output.sentiment,
@@ -249,6 +283,8 @@ export const bulkImportCallLogs = createServerFn({ method: "POST" })
         coupon: out.coupon,
         coupon_value: out.coupon_value,
         coupon_amount: out.coupon_amount,
+        payment_amount: out.payment_amount,
+        refund_amount: out.refund_amount,
         follow_up_needed: out.follow_up_needed ?? false,
         follow_up_notes: (out.follow_up_needed ?? false) ? out.follow_up_notes : null,
         sentiment: out.sentiment,
@@ -284,14 +320,20 @@ export const deleteCallLog = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+const CategoryEnum = z.enum([
+  "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
+  "reschedule", "reservice", "payment", "billing_update", "freeze", "refund",
+  "back_on_schedule", "other",
+]);
+
 const UpdateSchema = z.object({
   id: z.string().uuid(),
   patch: z
     .object({
       customer_name: z.string().nullish(),
       customer_id: z.string().nullish(),
-      category: z.enum(["saved", "closed", "resign", "lead", "cancel_pending", "other"]).optional(),
-      categories: z.array(z.enum(["saved", "closed", "resign", "lead", "cancel_pending", "other"])).optional(),
+      category: CategoryEnum.optional(),
+      categories: z.array(CategoryEnum).optional(),
       summary: z.string().nullish(),
       service_name: z.string().nullish(),
       price_per_service: z.number().nullish(),
@@ -299,6 +341,8 @@ const UpdateSchema = z.object({
       coupon: z.string().nullish(),
       coupon_value: z.string().nullish(),
       coupon_amount: z.number().nullish(),
+      payment_amount: z.number().nullish(),
+      refund_amount: z.number().nullish(),
       follow_up_needed: z.boolean().optional(),
       follow_up_notes: z.string().nullish(),
       sentiment: z.string().nullish(),
@@ -372,4 +416,89 @@ export const generateInsights = createServerFn({ method: "POST" })
     const overallCleaned = overallRes.text.replace(/SCORE:\s*\d{1,3}\s*(?:—|-|:)?\s*[^\n]*/i, "").trim();
 
     return { daily: dailyRes.text, overall: overallCleaned, score, scoreLabel };
+  });
+
+// ---------- Manual (structured) call entry ----------
+
+const ManualSchema = z.object({
+  categories: z.array(CategoryEnum).min(1),
+  customer_name: z.string().nullish(),
+  customer_id: z.string().nullish(),
+  summary: z.string().nullish(),
+  service_name: z.string().nullish(),
+  price_per_service: z.number().nullish(),
+  agreement_length_months: z.number().int().nullish(),
+  coupon: z.string().nullish(),
+  coupon_value: z.string().nullish(),
+  coupon_amount: z.number().nullish(),
+  payment_amount: z.number().nullish(),
+  refund_amount: z.number().nullish(),
+  follow_up_needed: z.boolean().default(false),
+  follow_up_notes: z.string().nullish(),
+  sentiment: z.string().nullish(),
+  call_date: z.string().nullish(),
+  raw_notes: z.string().nullish(),
+});
+
+export const createManualCallLog = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => ManualSchema.parse(input))
+  .handler(async ({ data, context }) => {
+    const call_date = data.call_date ? new Date(data.call_date).toISOString() : new Date().toISOString();
+    const { data: row, error } = await context.supabase
+      .from("call_logs")
+      .insert({
+        user_id: context.userId,
+        raw_notes: data.raw_notes?.trim() || `[Manual entry] ${data.summary ?? ""}`.trim(),
+        category: data.categories[0],
+        categories: data.categories,
+        customer_name: data.customer_name ?? null,
+        customer_id: data.customer_id ?? null,
+        summary: data.summary ?? null,
+        service_name: data.service_name ?? null,
+        price_per_service: data.price_per_service ?? null,
+        agreement_length_months: data.agreement_length_months ?? null,
+        coupon: data.coupon ?? null,
+        coupon_value: data.coupon_value ?? null,
+        coupon_amount: data.coupon_amount ?? null,
+        payment_amount: data.payment_amount ?? null,
+        refund_amount: data.refund_amount ?? null,
+        follow_up_needed: data.follow_up_needed,
+        follow_up_notes: data.follow_up_needed ? data.follow_up_notes ?? null : null,
+        sentiment: data.sentiment ?? null,
+        key_points: [],
+        call_date,
+        date_source: "user_selected",
+      })
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return row;
+  });
+
+// ---------- User settings (role) ----------
+
+const RoleEnum = z.enum(["ces", "cem"]);
+
+export const getUserSettings = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data, error } = await context.supabase
+      .from("user_settings")
+      .select("role")
+      .eq("user_id", context.userId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return { role: (data?.role ?? null) as "ces" | "cem" | null };
+  });
+
+export const setUserRole = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({ role: RoleEnum }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("user_settings")
+      .upsert({ user_id: context.userId, role: data.role }, { onConflict: "user_id" });
+    if (error) throw new Error(error.message);
+    return { role: data.role };
   });
