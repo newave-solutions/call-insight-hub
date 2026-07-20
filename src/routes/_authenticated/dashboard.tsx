@@ -165,6 +165,7 @@ function Dashboard() {
 
   const [notes, setNotes] = useState("");
   const [filter, setFilter] = useState<Category | "all">("all");
+  const [role] = useState<Role>("cem");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [callDate, setCallDate] = useState<Date>(new Date());
