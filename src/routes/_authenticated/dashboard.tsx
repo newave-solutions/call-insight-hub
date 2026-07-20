@@ -237,24 +237,22 @@ function Dashboard() {
   });
 
   const stats = useMemo(() => {
+    const cats = Object.fromEntries(ALL_CATEGORIES.map((c) => [c, 0])) as Record<Category, number>;
     const t = {
-      saved: 0,
-      closed: 0,
-      resign: 0,
-      lead: 0,
-      cancel_pending: 0,
-      other: 0,
+      ...cats,
       revenue: 0,
       couponsUsed: 0,
       couponTotal: 0,
+      paymentTotal: 0,
+      refundTotal: 0,
       followUps: 0,
       agreementSum: 0,
       agreementCount: 0,
     };
     for (const l of logs) {
-      const cats = logCategories(l);
-      for (const c of cats) t[c] += 1;
-      if (cats.includes("resign") && l.price_per_service && l.agreement_length_months) {
+      const lcats = logCategories(l);
+      for (const c of lcats) t[c] += 1;
+      if (lcats.includes("resign") && l.price_per_service && l.agreement_length_months) {
         t.revenue += Number(l.price_per_service) * l.agreement_length_months;
       }
       if (l.agreement_length_months) {
@@ -263,6 +261,8 @@ function Dashboard() {
       }
       if (l.coupon || l.coupon_amount) t.couponsUsed += 1;
       if (l.coupon_amount) t.couponTotal += Number(l.coupon_amount);
+      if (l.payment_amount) t.paymentTotal += Number(l.payment_amount);
+      if (l.refund_amount) t.refundTotal += Number(l.refund_amount);
       if (l.follow_up_needed) t.followUps += 1;
     }
     return t;
