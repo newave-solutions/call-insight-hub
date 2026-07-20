@@ -1312,20 +1312,25 @@ function ScoreCard({ score, label }: { score: number; label: string }) {
 
 type DailyRow = {
   key: string; date: Date; total: number;
-  saved: number; closed: number; resign: number; lead: number; cancel_pending: number; other: number;
-  coupons: number; followUps: number;
+  cats: Record<Category, number>;
+  coupons: number; payments: number; refunds: number; followUps: number;
 };
 
 function DailyTotalsTracker({
   rows,
   selected,
   onSelect,
+  role,
 }: {
   rows: DailyRow[];
   selected: Date | null;
   onSelect: (d: Date | null) => void;
+  role: Role;
 }) {
   const selKey = selected ? toDayKey(selected) : null;
+  const cols: Category[] = role === "cem"
+    ? ["saved", "closed", "resign", "lead", "cancel_pending", "pending_cancel"]
+    : ["reschedule", "reservice", "payment", "billing_update", "refund", "resign"];
   return (
     <div className="rounded-xl border bg-card shadow-sm">
       <div className="flex items-center justify-between border-b px-3 py-2">
@@ -1344,13 +1349,12 @@ function DailyTotalsTracker({
               <TableRow className="text-[10px] uppercase">
                 <TableHead className="h-8">Day</TableHead>
                 <TableHead className="h-8 text-right">Total</TableHead>
-                <TableHead className="h-8 text-right">Saved</TableHead>
-                <TableHead className="h-8 text-right">Closed</TableHead>
-                <TableHead className="h-8 text-right">Resign</TableHead>
-                <TableHead className="h-8 text-right">Lead</TableHead>
-                <TableHead className="h-8 text-right">Cancel Pnd</TableHead>
-                <TableHead className="h-8 text-right">Other</TableHead>
+                {cols.map((c) => (
+                  <TableHead key={c} className="h-8 text-right">{CATEGORY_META[c].label}</TableHead>
+                ))}
                 <TableHead className="h-8 text-right">Coupons $</TableHead>
+                {role === "ces" && <TableHead className="h-8 text-right">Payments $</TableHead>}
+                {role === "ces" && <TableHead className="h-8 text-right">Refunds $</TableHead>}
                 <TableHead className="h-8 text-right">Follow-ups</TableHead>
               </TableRow>
             </TableHeader>
@@ -1373,13 +1377,14 @@ function DailyTotalsTracker({
                       </div>
                     </TableCell>
                     <TableCell className="py-2 text-right font-semibold tabular-nums">{r.total}</TableCell>
-                    <TableCell className={cn("py-2 text-right tabular-nums", r.saved > 0 && "font-semibold text-emerald-600")}>{r.saved || "—"}</TableCell>
-                    <TableCell className={cn("py-2 text-right tabular-nums", r.closed > 0 && "font-semibold text-rose-600")}>{r.closed || "—"}</TableCell>
-                    <TableCell className={cn("py-2 text-right tabular-nums", r.resign > 0 && "font-semibold text-blue-600")}>{r.resign || "—"}</TableCell>
-                    <TableCell className={cn("py-2 text-right tabular-nums", r.lead > 0 && "font-semibold text-amber-600")}>{r.lead || "—"}</TableCell>
-                    <TableCell className={cn("py-2 text-right tabular-nums", r.cancel_pending > 0 && "font-semibold text-orange-600")}>{r.cancel_pending || "—"}</TableCell>
-                    <TableCell className="py-2 text-right tabular-nums text-muted-foreground">{r.other || "—"}</TableCell>
+                    {cols.map((c) => (
+                      <TableCell key={c} className={cn("py-2 text-right tabular-nums", r.cats[c] > 0 && "font-semibold")} style={r.cats[c] > 0 ? { color: CATEGORY_META[c].hex } : undefined}>
+                        {r.cats[c] || "—"}
+                      </TableCell>
+                    ))}
                     <TableCell className="py-2 text-right tabular-nums text-purple-600">{r.coupons ? `$${r.coupons.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}</TableCell>
+                    {role === "ces" && <TableCell className="py-2 text-right tabular-nums text-emerald-700">{r.payments ? `$${r.payments.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}</TableCell>}
+                    {role === "ces" && <TableCell className="py-2 text-right tabular-nums text-fuchsia-600">{r.refunds ? `$${r.refunds.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}</TableCell>}
                     <TableCell className="py-2 text-right tabular-nums text-amber-700">{r.followUps || "—"}</TableCell>
                   </TableRow>
                 );
