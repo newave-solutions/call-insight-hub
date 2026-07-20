@@ -320,23 +320,31 @@ function Dashboard() {
 
   // Per-day tally across ALL history — for the Daily Totals tracker.
   const dailyTotals = useMemo(() => {
-    const map = new Map<string, {
+    type Row = {
       key: string; date: Date; total: number;
-      saved: number; closed: number; resign: number; lead: number; cancel_pending: number; other: number;
-      coupons: number; followUps: number;
-    }>();
+      cats: Record<Category, number>;
+      coupons: number; payments: number; refunds: number; followUps: number;
+    };
+    const map = new Map<string, Row>();
     for (const l of logs) {
       const d = new Date(l.call_date ?? l.created_at);
       const key = toDayKey(d);
       let e = map.get(key);
       if (!e) {
-        e = { key, date: new Date(d.getFullYear(), d.getMonth(), d.getDate()), total: 0,
-          saved: 0, closed: 0, resign: 0, lead: 0, cancel_pending: 0, other: 0, coupons: 0, followUps: 0 };
+        e = {
+          key,
+          date: new Date(d.getFullYear(), d.getMonth(), d.getDate()),
+          total: 0,
+          cats: Object.fromEntries(ALL_CATEGORIES.map((c) => [c, 0])) as Record<Category, number>,
+          coupons: 0, payments: 0, refunds: 0, followUps: 0,
+        };
         map.set(key, e);
       }
       e.total += 1;
-      for (const c of logCategories(l)) e[c] += 1;
+      for (const c of logCategories(l)) e.cats[c] += 1;
       if (l.coupon_amount) e.coupons += Number(l.coupon_amount);
+      if (l.payment_amount) e.payments += Number(l.payment_amount);
+      if (l.refund_amount) e.refunds += Number(l.refund_amount);
       if (l.follow_up_needed) e.followUps += 1;
     }
     return Array.from(map.values()).sort((a, b) => b.date.getTime() - a.date.getTime());
