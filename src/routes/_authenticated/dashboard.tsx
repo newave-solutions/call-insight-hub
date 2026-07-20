@@ -777,6 +777,7 @@ function Dashboard() {
             rows={dailyTotals}
             selected={dayFilter}
             onSelect={(d) => setDayFilter(d)}
+            role={role}
           />
         </section>
       </main>
