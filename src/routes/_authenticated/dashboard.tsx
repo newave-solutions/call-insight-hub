@@ -5,9 +5,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   analyzeAndSaveCallLog,
   bulkImportCallLogs,
+  createManualCallLog,
   deleteCallLog,
   generateInsights,
+  getUserSettings,
   listCallLogs,
+  setUserRole,
   updateCallLog,
 } from "@/lib/call-logs.functions";
 import { supabase } from "@/integrations/supabase/client";
@@ -72,6 +75,15 @@ import {
   TrendingUp,
   Trash2,
   Upload,
+  Plus,
+  RefreshCw,
+  Wallet,
+  Undo2,
+  Snowflake,
+  ClipboardList,
+  Wrench,
+  CreditCard,
+  UserCog,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
