@@ -417,3 +417,88 @@ export const generateInsights = createServerFn({ method: "POST" })
 
     return { daily: dailyRes.text, overall: overallCleaned, score, scoreLabel };
   });
+
+// ---------- Manual (structured) call entry ----------
+
+const ManualSchema = z.object({
+  categories: z.array(CategoryEnum).min(1),
+  customer_name: z.string().nullish(),
+  customer_id: z.string().nullish(),
+  summary: z.string().nullish(),
+  service_name: z.string().nullish(),
+  price_per_service: z.number().nullish(),
+  agreement_length_months: z.number().int().nullish(),
+  coupon: z.string().nullish(),
+  coupon_value: z.string().nullish(),
+  coupon_amount: z.number().nullish(),
+  payment_amount: z.number().nullish(),
+  refund_amount: z.number().nullish(),
+  follow_up_needed: z.boolean().default(false),
+  follow_up_notes: z.string().nullish(),
+  sentiment: z.string().nullish(),
+  call_date: z.string().nullish(),
+  raw_notes: z.string().nullish(),
+});
+
+export const createManualCallLog = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => ManualSchema.parse(input))
+  .handler(async ({ data, context }) => {
+    const call_date = data.call_date ? new Date(data.call_date).toISOString() : new Date().toISOString();
+    const { data: row, error } = await context.supabase
+      .from("call_logs")
+      .insert({
+        user_id: context.userId,
+        raw_notes: data.raw_notes?.trim() || `[Manual entry] ${data.summary ?? ""}`.trim(),
+        category: data.categories[0],
+        categories: data.categories,
+        customer_name: data.customer_name ?? null,
+        customer_id: data.customer_id ?? null,
+        summary: data.summary ?? null,
+        service_name: data.service_name ?? null,
+        price_per_service: data.price_per_service ?? null,
+        agreement_length_months: data.agreement_length_months ?? null,
+        coupon: data.coupon ?? null,
+        coupon_value: data.coupon_value ?? null,
+        coupon_amount: data.coupon_amount ?? null,
+        payment_amount: data.payment_amount ?? null,
+        refund_amount: data.refund_amount ?? null,
+        follow_up_needed: data.follow_up_needed,
+        follow_up_notes: data.follow_up_needed ? data.follow_up_notes ?? null : null,
+        sentiment: data.sentiment ?? null,
+        key_points: [],
+        call_date,
+        date_source: "user_selected",
+      })
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return row;
+  });
+
+// ---------- User settings (role) ----------
+
+const RoleEnum = z.enum(["ces", "cem"]);
+
+export const getUserSettings = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data, error } = await context.supabase
+      .from("user_settings")
+      .select("role")
+      .eq("user_id", context.userId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return { role: (data?.role ?? null) as "ces" | "cem" | null };
+  });
+
+export const setUserRole = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({ role: RoleEnum }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("user_settings")
+      .upsert({ user_id: context.userId, role: data.role }, { onConflict: "user_id" });
+    if (error) throw new Error(error.message);
+    return { role: data.role };
+  });
