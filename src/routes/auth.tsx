@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { PhoneCall } from "lucide-react";
+import { PhoneCall, AlertCircle } from "lucide-react";
 
 export const Route = createFileRoute("/auth")({
   component: AuthPage,
@@ -23,7 +23,9 @@ function AuthPage() {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState<string[]>([]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -35,24 +37,77 @@ function AuthPage() {
     return () => sub.subscription.unsubscribe();
   }, [navigate]);
 
+  function validateInputs(): boolean {
+    const newErrors: string[] = [];
+
+    if (!email || !email.includes("@")) {
+      newErrors.push("Please enter a valid email address");
+    }
+
+    if (!password || password.length < 6) {
+      newErrors.push("Password must be at least 6 characters");
+    }
+
+    if (mode === "signup") {
+      if (password !== confirmPassword) {
+        newErrors.push("Passwords do not match");
+      }
+    }
+
+    setErrors(newErrors);
+    return newErrors.length === 0;
+  }
+
   async function handleEmail(e: React.FormEvent) {
     e.preventDefault();
+
+    if (!validateInputs()) {
+      return;
+    }
+
     setLoading(true);
+    setErrors([]);
+
     try {
       if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({
+        const { error, data } = await supabase.auth.signUp({
           email,
           password,
           options: { emailRedirectTo: window.location.origin },
         });
-        if (error) throw error;
-        toast.success("Check your email to confirm your account.");
+
+        if (error) {
+          throw error;
+        }
+
+        if (data?.user?.identities?.length === 0) {
+          setErrors(["This email is already registered. Please sign in instead."]);
+          setMode("signin");
+          return;
+        }
+
+        toast.success("Account created! Check your email to confirm.");
+        setEmail("");
+        setPassword("");
+        setConfirmPassword("");
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+
+        if (error) {
+          if (error.message.includes("Invalid login credentials")) {
+            setErrors(["Invalid email or password"]);
+          } else {
+            throw error;
+          }
+          return;
+        }
+
+        toast.success("Signed in successfully!");
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Authentication failed");
+      const message = err instanceof Error ? err.message : "Authentication failed";
+      setErrors([message]);
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -60,11 +115,23 @@ function AuthPage() {
 
   async function handleGoogle() {
     setLoading(true);
-    const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin,
-    });
-    if (result.error) {
-      toast.error(result.error.message ?? "Google sign-in failed");
+    setErrors([]);
+
+    try {
+      const result = await lovable.auth.signInWithOAuth("google", {
+        redirect_uri: window.location.origin,
+      });
+
+      if (result.error) {
+        const message = result.error.message ?? "Google sign-in failed";
+        setErrors([message]);
+        toast.error(message);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Google sign-in failed";
+      setErrors([message]);
+      toast.error(message);
+    } finally {
       setLoading(false);
     }
   }
@@ -83,18 +150,41 @@ function AuthPage() {
         </div>
 
         <div className="rounded-2xl border bg-card p-6 shadow-sm">
+          {errors.length > 0 && (
+            <div className="mb-4 flex gap-3 rounded-lg bg-destructive/10 p-3 text-sm">
+              <AlertCircle className="h-4 w-4 flex-shrink-0 text-destructive mt-0.5" />
+              <div className="space-y-1">
+                {errors.map((error, i) => (
+                  <p key={i} className="text-destructive">
+                    {error}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="mb-6 flex gap-2 rounded-lg bg-muted p-1 text-sm">
             <button
               type="button"
-              onClick={() => setMode("signin")}
-              className={`flex-1 rounded-md px-3 py-1.5 font-medium transition-colors ${mode === "signin" ? "bg-background shadow" : "text-muted-foreground"}`}
+              onClick={() => {
+                setMode("signin");
+                setErrors([]);
+              }}
+              className={`flex-1 rounded-md px-3 py-1.5 font-medium transition-colors ${
+                mode === "signin" ? "bg-background shadow" : "text-muted-foreground"
+              }`}
             >
               Sign in
             </button>
             <button
               type="button"
-              onClick={() => setMode("signup")}
-              className={`flex-1 rounded-md px-3 py-1.5 font-medium transition-colors ${mode === "signup" ? "bg-background shadow" : "text-muted-foreground"}`}
+              onClick={() => {
+                setMode("signup");
+                setErrors([]);
+              }}
+              className={`flex-1 rounded-md px-3 py-1.5 font-medium transition-colors ${
+                mode === "signup" ? "bg-background shadow" : "text-muted-foreground"
+              }`}
             >
               Sign up
             </button>
@@ -103,14 +193,49 @@ function AuthPage() {
           <form onSubmit={handleEmail} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+              <Input
+                id="email"
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={loading}
+                placeholder="your@email.com"
+              />
             </div>
+
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
-              <Input id="password" type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} />
+              <Input
+                id="password"
+                type="password"
+                required
+                minLength={6}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
+                placeholder={mode === "signup" ? "At least 6 characters" : "Your password"}
+              />
             </div>
+
+            {mode === "signup" && (
+              <div className="space-y-2">
+                <Label htmlFor="confirmPassword">Confirm Password</Label>
+                <Input
+                  id="confirmPassword"
+                  type="password"
+                  required
+                  minLength={6}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  disabled={loading}
+                  placeholder="Confirm your password"
+                />
+              </div>
+            )}
+
             <Button type="submit" className="w-full" disabled={loading}>
-              {mode === "signup" ? "Create account" : "Sign in"}
+              {loading ? "Processing..." : mode === "signup" ? "Create account" : "Sign in"}
             </Button>
           </form>
 
@@ -120,13 +245,21 @@ function AuthPage() {
             <div className="h-px flex-1 bg-border" />
           </div>
 
-          <Button type="button" variant="outline" className="w-full" onClick={handleGoogle} disabled={loading}>
-            Continue with Google
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            onClick={handleGoogle}
+            disabled={loading}
+          >
+            {loading ? "Processing..." : "Continue with Google"}
           </Button>
         </div>
 
         <p className="text-center text-xs text-muted-foreground">
-          <Link to="/" className="hover:underline">Back home</Link>
+          <Link to="/" className="hover:underline">
+            Back home
+          </Link>
         </p>
       </div>
     </div>
