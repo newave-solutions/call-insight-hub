@@ -1002,6 +1002,7 @@ function DetailDrawer({
     customer_name: log.customer_name ?? "",
     customer_id: log.customer_id ?? "",
     category: log.category,
+    categories: logCategories(log),
     summary: log.summary ?? "",
     service_name: log.service_name ?? "",
     price_per_service: log.price_per_service != null ? String(log.price_per_service) : "",
@@ -1009,6 +1010,8 @@ function DetailDrawer({
     coupon: log.coupon ?? "",
     coupon_value: log.coupon_value ?? "",
     coupon_amount: log.coupon_amount != null ? String(log.coupon_amount) : "",
+    payment_amount: log.payment_amount != null ? String(log.payment_amount) : "",
+    refund_amount: log.refund_amount != null ? String(log.refund_amount) : "",
     follow_up_needed: log.follow_up_needed,
     follow_up_notes: log.follow_up_notes ?? "",
     sentiment: log.sentiment ?? "",
@@ -1021,10 +1024,12 @@ function DetailDrawer({
   }
 
   async function save() {
+    const cats = form.categories.length > 0 ? form.categories : [form.category as Category];
     const patch: Record<string, unknown> = {
       customer_name: form.customer_name.trim() || null,
       customer_id: form.customer_id.trim() || null,
-      category: form.category,
+      categories: cats,
+      category: cats[0],
       summary: form.summary.trim() || null,
       service_name: form.service_name.trim() || null,
       price_per_service: form.price_per_service ? Number(form.price_per_service) : null,
@@ -1032,6 +1037,8 @@ function DetailDrawer({
       coupon: form.coupon.trim() || null,
       coupon_value: form.coupon_value.trim() || null,
       coupon_amount: form.coupon_amount ? Number(form.coupon_amount) : null,
+      payment_amount: form.payment_amount ? Number(form.payment_amount) : null,
+      refund_amount: form.refund_amount ? Number(form.refund_amount) : null,
       follow_up_needed: form.follow_up_needed,
       follow_up_notes: form.follow_up_needed ? form.follow_up_notes.trim() || null : null,
       sentiment: form.sentiment.trim() || null,
