@@ -102,14 +102,14 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 type Category =
   | "saved" | "closed" | "resign" | "reactivation" | "lead"
   | "cancel_pending" | "pending_cancel"
-  | "reschedule" | "reservice" | "payment" | "billing_update"
-  | "freeze" | "refund" | "back_on_schedule" | "other";
+  | "reschedule" | "reservice" | "payment" | "payment_promise" | "billing_update"
+  | "freeze" | "refund" | "back_on_schedule" | "inquiry" | "escalation" | "other";
 
 const ALL_CATEGORIES: Category[] = [
   "saved", "closed", "resign", "reactivation", "lead",
   "cancel_pending", "pending_cancel",
-  "reschedule", "reservice", "payment", "billing_update",
-  "freeze", "refund", "back_on_schedule", "other",
+  "reschedule", "reservice", "payment", "payment_promise", "billing_update",
+  "freeze", "refund", "back_on_schedule", "inquiry", "escalation", "other",
 ];
 
 type Role = "ces" | "cem";
@@ -144,13 +144,16 @@ const CATEGORY_META: Record<
   freeze: { label: "Freeze", icon: Snowflake, color: "text-blue-500 bg-blue-400/10", dot: "bg-blue-400", hex: "#60a5fa" },
   refund: { label: "Refund", icon: Undo2, color: "text-fuchsia-600 bg-fuchsia-500/10", dot: "bg-fuchsia-500", hex: "#c026d3" },
   back_on_schedule: { label: "Back on Schedule", icon: RefreshCw, color: "text-slate-600 bg-slate-500/10", dot: "bg-slate-500", hex: "#64748b" },
+  payment_promise: { label: "Payment Promised", icon: Wallet, color: "text-lime-700 bg-lime-500/10", dot: "bg-lime-500", hex: "#65a30d" },
+  inquiry: { label: "Inquiry / Doubts", icon: MessageSquare, color: "text-violet-600 bg-violet-500/10", dot: "bg-violet-500", hex: "#8b5cf6" },
+  escalation: { label: "Escalation", icon: BellRing, color: "text-orange-700 bg-orange-600/10", dot: "bg-orange-600", hex: "#ea580c" },
   other: { label: "Other", icon: MessageSquare, color: "text-muted-foreground bg-muted", dot: "bg-muted-foreground/60", hex: "#94a3b8" },
 };
 
 // Which category chips get top-of-page KPI cards per role.
 const KPI_BY_ROLE: Record<Role, Category[]> = {
-  cem: ["saved", "closed", "resign", "lead", "cancel_pending", "pending_cancel", "reactivation", "reschedule"],
-  ces: ["reschedule", "reservice", "payment", "billing_update", "refund", "resign", "lead", "freeze"],
+  cem: ["saved", "closed", "resign", "lead", "cancel_pending", "pending_cancel", "reactivation", "inquiry"],
+  ces: ["reschedule", "reservice", "payment", "billing_update", "refund", "resign", "lead", "inquiry"],
 };
 
 function Dashboard() {
