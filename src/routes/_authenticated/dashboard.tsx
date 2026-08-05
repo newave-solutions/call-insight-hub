@@ -994,6 +994,18 @@ function DetailDrawer({
   onSave: (patch: Partial<Record<string, unknown>>) => Promise<unknown>;
   saving: boolean;
 }) {
+  log,
+  onClose,
+  onDelete,
+  onSave,
+  saving,
+}: {
+  log: Log;
+  onClose: () => void;
+  onDelete: () => void;
+  onSave: (patch: Partial<Record<string, unknown>>) => Promise<unknown>;
+  saving: boolean;
+}) {
   const meta = CATEGORY_META[log.category as Category];
   const Icon = meta.icon;
   const points = Array.isArray(log.key_points) ? (log.key_points as string[]) : [];
