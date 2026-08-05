@@ -994,6 +994,80 @@ function DetailDrawer({
   onSave: (patch: Partial<Record<string, unknown>>) => Promise<unknown>;
   saving: boolean;
 }) {
+  return <DetailDrawerInner log={log} onClose={onClose} onDelete={onDelete} onSave={onSave} saving={saving} />;
+}
+
+// Multi-outcome picker: one call can carry several outcomes, and the same outcome twice
+// (e.g. two subscriptions closed on one call).
+function OutcomeEditor({
+  value,
+  onChange,
+}: {
+  value: Category[];
+  onChange: (next: Category[]) => void;
+}) {
+  const counts = value.reduce<Partial<Record<Category, number>>>((acc, c) => {
+    acc[c] = (acc[c] ?? 0) + 1;
+    return acc;
+  }, {});
+  function rebuild(next: Partial<Record<Category, number>>) {
+    const out: Category[] = [];
+    for (const c of ALL_CATEGORIES) {
+      for (let i = 0; i < (next[c] ?? 0); i++) out.push(c);
+    }
+    onChange(out);
+  }
+  return (
+    <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+      {ALL_CATEGORIES.filter((c) => c !== "other" || (counts.other ?? 0) > 0).map((c) => {
+        const n = counts[c] ?? 0;
+        const meta = CATEGORY_META[c];
+        return (
+          <div
+            key={c}
+            className={cn(
+              "flex items-center justify-between gap-1 rounded-md border px-2 py-1 text-xs",
+              n > 0 ? meta.color : "text-muted-foreground",
+            )}
+          >
+            <button
+              type="button"
+              className="flex-1 truncate text-left"
+              onClick={() => rebuild({ ...counts, [c]: n > 0 ? 0 : 1 })}
+            >
+              {meta.label}
+            </button>
+            {n > 0 && (
+              <span className="flex items-center gap-1">
+                <button type="button" aria-label={`Remove one ${meta.label}`} className="px-1" onClick={() => rebuild({ ...counts, [c]: n - 1 })}>
+                  −
+                </button>
+                <span className="tabular-nums font-semibold">{n}</span>
+                <button type="button" aria-label={`Add one ${meta.label}`} className="px-1" onClick={() => rebuild({ ...counts, [c]: n + 1 })}>
+                  +
+                </button>
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DetailDrawerInner({
+  log,
+  onClose,
+  onDelete,
+  onSave,
+  saving,
+}: {
+  log: Log;
+  onClose: () => void;
+  onDelete: () => void;
+  onSave: (patch: Partial<Record<string, unknown>>) => Promise<unknown>;
+  saving: boolean;
+}) {
   const meta = CATEGORY_META[log.category as Category];
   const Icon = meta.icon;
   const points = Array.isArray(log.key_points) ? (log.key_points as string[]) : [];
