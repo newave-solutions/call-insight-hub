@@ -4,23 +4,20 @@ import { generateObject, generateText, NoObjectGeneratedError } from "ai";
 import { z } from "zod";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 
+export const CATEGORY_VALUES = [
+  "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
+  "reschedule", "reservice", "payment", "payment_promise", "billing_update", "freeze", "refund",
+  "back_on_schedule", "inquiry", "escalation", "other",
+] as const;
+
+const CategoryZ = z.enum(CATEGORY_VALUES);
+
 const AnalysisSchema = z.object({
   // A single call can have multiple outcomes (e.g. one save + one resign, or two closes on a
   // multi-subscription household). Always return at least one entry.
-  categories: z
-    .array(z.enum([
-      "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
-      "reschedule", "reservice", "payment", "billing_update", "freeze", "refund",
-      "back_on_schedule", "other",
-    ]))
-    .nullish()
-    .default([]),
+  categories: z.array(CategoryZ).nullish().default([]),
   // Primary outcome — first/most prominent one — kept for backward compatibility & display.
-  category: z.enum([
-    "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
-    "reschedule", "reservice", "payment", "billing_update", "freeze", "refund",
-    "back_on_schedule", "other",
-  ]).default("other"),
+  category: CategoryZ.default("inquiry"),
   customer_name: z.string().nullish().default(null),
   customer_id: z.string().nullish().default(null),
   summary: z.string().nullish().default(""),
