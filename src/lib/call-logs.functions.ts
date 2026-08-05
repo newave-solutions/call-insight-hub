@@ -104,11 +104,14 @@ Categories — pick every outcome that applies (the same call can have several):
 - "reschedule": a service was rescheduled or scheduled (new appointment date).
 - "reservice": a free re-service was scheduled between regular services (no charge to customer).
 - "payment": a payment / outstanding balance was taken on the call. Populate payment_amount with the dollar amount collected (numeric).
+- "payment_promise": the customer did not pay on the call but committed to call back / pay later.
 - "billing_update": billing information (card, address, autopay) was updated. If a payment was ALSO taken, include BOTH "billing_update" and "payment".
-- "freeze": account was frozen / paused (e.g. seasonal freeze).
+- "freeze": account was frozen / paused (e.g. seasonal freeze). A FROZEN account counts the same as a close for retention purposes — use "freeze" (do not also add "closed").
 - "refund": a refund was issued to the customer. Populate refund_amount with the refunded dollar amount (numeric).
 - "back_on_schedule": customer was on "the doc" and could not be reached after 3 attempts, so they were placed back on regular schedule. Notes may say "transferred from the doc", "back on schedule", "put back on schedule".
-- "other": general inquiry, complaint, info call, etc.
+- "inquiry": customer had doubts/questions, wanted clarification, general info, a complaint, or product/value education — nothing else changed on the account. Use this instead of "other".
+- "escalation": call was escalated / transferred to a branch, field manager, or another department.
+- "other": FORBIDDEN. Never return this value.
 
 MULTI-OUTCOME CALLS (CRITICAL — do not skip):
 A single call can produce MORE THAN ONE outcome and each outcome must be tallied separately.
