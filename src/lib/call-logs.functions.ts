@@ -386,11 +386,7 @@ export const deleteCallLog = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-const CategoryEnum = z.enum([
-  "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
-  "reschedule", "reservice", "payment", "billing_update", "freeze", "refund",
-  "back_on_schedule", "other",
-]);
+const CategoryEnum = CategoryZ;
 
 const UpdateSchema = z.object({
   id: z.string().uuid(),
