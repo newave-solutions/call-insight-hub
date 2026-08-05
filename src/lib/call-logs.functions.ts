@@ -183,14 +183,67 @@ async function runExtraction(notes: string): Promise<Analysis> {
       const raw = (err as { text?: string }).text ?? "";
       const match = raw.match(/\{[\s\S]*\}/);
       const parsed = match ? safeJson(match[0]) : null;
-      return normalize(AnalysisSchema.parse(parsed ?? {}));
+      if (parsed) {
+        const lenient = AnalysisSchema.safeParse(parsed);
+        if (lenient.success) return normalize(lenient.data);
+      }
     }
-    throw err;
+    // Never lose a call: fall back to a heuristic read of the notes.
+    return normalize(heuristicExtract(notes));
   }
 }
 
+// Last-resort local parser so a call ALWAYS gets logged even if the model is unavailable.
+const SERVICE_MAP: [RegExp, string][] = [
+  [/\bppeom\b|\bpp\s*eom\b/i, "Protection Program Every Other Month"],
+  [/\bppmps\b/i, "Perimeter Plus Mosquito Peak Season"],
+  [/\bppmos\b|\bppm\b/i, "Perimeter Plus Mosquito"],
+  [/\bryg\b/i, "Rodent Yard Guard"],
+  [/\bmos\b/i, "Mosquito Bundled"],
+  [/\bpp\s*rodent\s*plus\b/i, "Protection Program Rodent Plus"],
+  [/\bpp\b/i, "Protection Program"],
+];
+
+function heuristicExtract(notes: string): Analysis {
+  const cats: string[] = [];
+  const has = (re: RegExp) => re.test(notes);
+  if (has(/\bre-?sign(ed|ing)?\b|\bnew agreement\b|reduc\w* to/i)) cats.push("resign");
+  if (has(/\bsaved?\b|\bretain(ed)?\b/i)) cats.push("saved");
+  if (has(/\bclos(ed|ing)\b|\bcancel(l?ed)\b(?!\s*pending)/i)) cats.push("closed");
+  if (has(/\bcancel\s*pending\b/i)) cats.push("cancel_pending");
+  if (has(/\bpending\s*cancel\b|\bthe doc\b/i)) cats.push("pending_cancel");
+  if (has(/\blead\b|inside sales/i)) cats.push("lead");
+  if (has(/\breactivat/i)) cats.push("reactivation");
+  if (has(/\bre-?schedul/i)) cats.push("reschedule");
+  if (has(/\bre-?service\b|\brs\b/i)) cats.push("reservice");
+  if (has(/\bfreez|\bfrozen\b/i)) cats.push("freeze");
+  if (has(/\brefund/i)) cats.push("refund");
+  if (has(/\bpayment\b|\bpaid\b|\bbalance\b/i)) cats.push("payment");
+  if (has(/\bbilling\b|\bcard\b|\bautopay\b/i)) cats.push("billing_update");
+  if (has(/back on schedule/i)) cats.push("back_on_schedule");
+  if (has(/escalat|transferred to (branch|fm|bm)/i)) cats.push("escalation");
+  if (cats.length === 0) cats.push("inquiry");
+
+  const id = notes.match(/\b(\d{6,9})\b/)?.[1] ?? null;
+  const price = notes.match(/\$?\s?(\d{2,4}(?:\.\d{2})?)\s*(?:\/|per)?\s*(?:service|svc)?/i)?.[1];
+  const service = SERVICE_MAP.find(([re]) => re.test(notes))?.[1] ?? null;
+
+  return AnalysisSchema.parse({
+    categories: cats,
+    category: cats[0],
+    customer_id: id,
+    service_name: service,
+    price_per_service: price ? Number(price) : null,
+    summary: notes.slice(0, 400),
+    key_points: [],
+  });
+}
+
 function normalize(a: Analysis): Analysis {
-  const cats = Array.isArray(a.categories) && a.categories.length > 0 ? a.categories : [a.category];
+  const raw = Array.isArray(a.categories) && a.categories.length > 0 ? a.categories : [a.category];
+  // "other" is never allowed — an unclassified call is an inquiry.
+  const mapped = raw.map((c) => (c === "other" ? "inquiry" : c)) as Analysis["category"][];
+  const cats = mapped.length > 0 ? mapped : (["inquiry"] as Analysis["category"][]);
   return { ...a, categories: cats, category: cats[0] };
 }
 
