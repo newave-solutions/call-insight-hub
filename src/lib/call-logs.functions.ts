@@ -442,7 +442,7 @@ export const generateInsights = createServerFn({ method: "POST" })
   .handler(async ({ context }) => {
     const { data: logs, error } = await context.supabase
       .from("call_logs")
-      .select("category,customer_name,summary,agreement_length_months,price_per_service,service_name,coupon,coupon_value,coupon_amount,sentiment,follow_up_needed,key_points,call_date,created_at")
+      .select("category,categories,customer_name,summary,agreement_length_months,price_per_service,service_name,coupon,coupon_value,coupon_amount,payment_amount,refund_amount,sentiment,follow_up_needed,key_points,call_date,created_at")
       .order("call_date", { ascending: false, nullsFirst: false })
       .limit(500);
     if (error) throw new Error(error.message);
