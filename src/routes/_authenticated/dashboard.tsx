@@ -1102,17 +1102,6 @@ function DetailDrawer({
               <EditField label="Customer ID">
                 <Input value={form.customer_id} onChange={(e) => set("customer_id", e.target.value)} />
               </EditField>
-              <EditField label="Category">
-                <select
-                  value={form.category}
-                  onChange={(e) => set("category", e.target.value as Category)}
-                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-                >
-                  {(Object.keys(CATEGORY_META) as Category[]).map((c) => (
-                    <option key={c} value={c}>{CATEGORY_META[c].label}</option>
-                  ))}
-                </select>
-              </EditField>
               <EditField label="Call date">
                 <Popover open={dateOpen} onOpenChange={setDateOpen}>
                   <PopoverTrigger asChild>
@@ -1156,7 +1145,19 @@ function DetailDrawer({
               <EditField label="Coupon $ amount">
                 <Input inputMode="decimal" value={form.coupon_amount} onChange={(e) => set("coupon_amount", e.target.value)} />
               </EditField>
+              <EditField label="Payment collected $">
+                <Input inputMode="decimal" value={form.payment_amount} onChange={(e) => set("payment_amount", e.target.value)} />
+              </EditField>
+              <EditField label="Refund $">
+                <Input inputMode="decimal" value={form.refund_amount} onChange={(e) => set("refund_amount", e.target.value)} />
+              </EditField>
             </div>
+            <EditField label="Outcomes (a call can have several — tap + to count an outcome twice)">
+              <OutcomeEditor
+                value={form.categories}
+                onChange={(next) => set("categories", next)}
+              />
+            </EditField>
             <EditField label="Summary">
               <Textarea value={form.summary} onChange={(e) => set("summary", e.target.value)} className="min-h-[80px]" />
             </EditField>
