@@ -174,8 +174,8 @@ If follow_up_needed is false, follow_up_notes must be null.
 Return JSON matching the schema exactly. Use null for missing text; 0 for coupon_amount when no discount; false for follow_up_needed when nothing is truly pending.`;
 
 async function runExtraction(notes: string): Promise<Analysis> {
-  const model = getModel();
   try {
+    const model = getModel();
     const res = await generateObject({ model, schema: AnalysisSchema, system: SYSTEM_PROMPT, prompt: `Call notes:\n\n${notes}` });
     return normalize(res.object);
   } catch (err) {
@@ -326,7 +326,7 @@ export const bulkImportCallLogs = createServerFn({ method: "POST" })
         try {
           results[idx] = await runExtraction(data.items[idx].notes);
         } catch {
-          results[idx] = AnalysisSchema.parse({});
+          results[idx] = normalize(heuristicExtract(data.items[idx].notes));
         }
       }
     }
