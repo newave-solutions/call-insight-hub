@@ -52,7 +52,20 @@ const SYSTEM_PROMPT = `You read customer service / retention call notes for SAEL
 ROLES using this app:
 - CEM (Customer Experience Manager) — retention focus: saves vs closes, resigns, leads, cancel_pending, pending_cancel, coupons.
 - CES (Customer Experience Specialist) — service focus: reschedules, free re-services (no charge), building value, resigns, leads, updating billing information, taking payments on outstanding balances, refunds.
-Categorize the call using ANY category — do not default to "other" just because you're unsure. Pick every applicable outcome from the list below. Only use "other" as an absolute last resort.
+CRITICAL: EVERY call gets at least one real outcome. NEVER return "other". If nothing else fits,
+the call is an "inquiry" (customer had questions / doubts / wanted clarification). Pick EVERY
+applicable outcome from the list below — multiple outcomes per call are normal and expected.
+
+NOTE FORMATS you will receive (both are valid — read whichever you get):
+1. A long call summary with sections (Summary / Resolution / Result).
+2. A terse agent shorthand line, e.g.:
+   "1585346 / John Doe / PPEOM / resign 119 / 50% off"
+   "1585346 PP EOM Kansas East — save, coupon 1 free service ($139)"
+   Parse a leading 7-ish-digit number as customer_id, a person name as customer_name, a service
+   shorthand as service_name (expanded), a bare number after "resign"/"reduced to"/"$" as
+   price_per_service, and "50%" / "100%" / "free service" / a dollar figure as the coupon.
+   "119" or "reduced to 119" means the new price per service is $119 (that is a resign/price
+   reduction, not a coupon, unless it says off/discount/free).
 
 DOMAIN — Saela Pest Control services (shorthand you WILL see):
 - PP = Protection Program
