@@ -102,14 +102,14 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 type Category =
   | "saved" | "closed" | "resign" | "reactivation" | "lead"
   | "cancel_pending" | "pending_cancel"
-  | "reschedule" | "reservice" | "payment" | "billing_update"
-  | "freeze" | "refund" | "back_on_schedule" | "other";
+  | "reschedule" | "reservice" | "payment" | "payment_promise" | "billing_update"
+  | "freeze" | "refund" | "back_on_schedule" | "inquiry" | "escalation" | "other";
 
 const ALL_CATEGORIES: Category[] = [
   "saved", "closed", "resign", "reactivation", "lead",
   "cancel_pending", "pending_cancel",
-  "reschedule", "reservice", "payment", "billing_update",
-  "freeze", "refund", "back_on_schedule", "other",
+  "reschedule", "reservice", "payment", "payment_promise", "billing_update",
+  "freeze", "refund", "back_on_schedule", "inquiry", "escalation", "other",
 ];
 
 type Role = "ces" | "cem";
@@ -144,13 +144,16 @@ const CATEGORY_META: Record<
   freeze: { label: "Freeze", icon: Snowflake, color: "text-blue-500 bg-blue-400/10", dot: "bg-blue-400", hex: "#60a5fa" },
   refund: { label: "Refund", icon: Undo2, color: "text-fuchsia-600 bg-fuchsia-500/10", dot: "bg-fuchsia-500", hex: "#c026d3" },
   back_on_schedule: { label: "Back on Schedule", icon: RefreshCw, color: "text-slate-600 bg-slate-500/10", dot: "bg-slate-500", hex: "#64748b" },
+  payment_promise: { label: "Payment Promised", icon: Wallet, color: "text-lime-700 bg-lime-500/10", dot: "bg-lime-500", hex: "#65a30d" },
+  inquiry: { label: "Inquiry / Doubts", icon: MessageSquare, color: "text-violet-600 bg-violet-500/10", dot: "bg-violet-500", hex: "#8b5cf6" },
+  escalation: { label: "Escalation", icon: BellRing, color: "text-orange-700 bg-orange-600/10", dot: "bg-orange-600", hex: "#ea580c" },
   other: { label: "Other", icon: MessageSquare, color: "text-muted-foreground bg-muted", dot: "bg-muted-foreground/60", hex: "#94a3b8" },
 };
 
 // Which category chips get top-of-page KPI cards per role.
 const KPI_BY_ROLE: Record<Role, Category[]> = {
-  cem: ["saved", "closed", "resign", "lead", "cancel_pending", "pending_cancel", "reactivation", "reschedule"],
-  ces: ["reschedule", "reservice", "payment", "billing_update", "refund", "resign", "lead", "freeze"],
+  cem: ["saved", "closed", "resign", "lead", "cancel_pending", "pending_cancel", "reactivation", "inquiry"],
+  ces: ["reschedule", "reservice", "payment", "billing_update", "refund", "resign", "lead", "inquiry"],
 };
 
 function Dashboard() {
@@ -991,6 +994,80 @@ function DetailDrawer({
   onSave: (patch: Partial<Record<string, unknown>>) => Promise<unknown>;
   saving: boolean;
 }) {
+  return <DetailDrawerInner log={log} onClose={onClose} onDelete={onDelete} onSave={onSave} saving={saving} />;
+}
+
+// Multi-outcome picker: one call can carry several outcomes, and the same outcome twice
+// (e.g. two subscriptions closed on one call).
+function OutcomeEditor({
+  value,
+  onChange,
+}: {
+  value: Category[];
+  onChange: (next: Category[]) => void;
+}) {
+  const counts = value.reduce<Partial<Record<Category, number>>>((acc, c) => {
+    acc[c] = (acc[c] ?? 0) + 1;
+    return acc;
+  }, {});
+  function rebuild(next: Partial<Record<Category, number>>) {
+    const out: Category[] = [];
+    for (const c of ALL_CATEGORIES) {
+      for (let i = 0; i < (next[c] ?? 0); i++) out.push(c);
+    }
+    onChange(out);
+  }
+  return (
+    <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+      {ALL_CATEGORIES.filter((c) => c !== "other" || (counts.other ?? 0) > 0).map((c) => {
+        const n = counts[c] ?? 0;
+        const meta = CATEGORY_META[c];
+        return (
+          <div
+            key={c}
+            className={cn(
+              "flex items-center justify-between gap-1 rounded-md border px-2 py-1 text-xs",
+              n > 0 ? meta.color : "text-muted-foreground",
+            )}
+          >
+            <button
+              type="button"
+              className="flex-1 truncate text-left"
+              onClick={() => rebuild({ ...counts, [c]: n > 0 ? 0 : 1 })}
+            >
+              {meta.label}
+            </button>
+            {n > 0 && (
+              <span className="flex items-center gap-1">
+                <button type="button" aria-label={`Remove one ${meta.label}`} className="px-1" onClick={() => rebuild({ ...counts, [c]: n - 1 })}>
+                  −
+                </button>
+                <span className="tabular-nums font-semibold">{n}</span>
+                <button type="button" aria-label={`Add one ${meta.label}`} className="px-1" onClick={() => rebuild({ ...counts, [c]: n + 1 })}>
+                  +
+                </button>
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DetailDrawerInner({
+  log,
+  onClose,
+  onDelete,
+  onSave,
+  saving,
+}: {
+  log: Log;
+  onClose: () => void;
+  onDelete: () => void;
+  onSave: (patch: Partial<Record<string, unknown>>) => Promise<unknown>;
+  saving: boolean;
+}) {
   const meta = CATEGORY_META[log.category as Category];
   const Icon = meta.icon;
   const points = Array.isArray(log.key_points) ? (log.key_points as string[]) : [];
@@ -999,6 +1076,7 @@ function DetailDrawer({
     customer_name: log.customer_name ?? "",
     customer_id: log.customer_id ?? "",
     category: log.category,
+    categories: logCategories(log),
     summary: log.summary ?? "",
     service_name: log.service_name ?? "",
     price_per_service: log.price_per_service != null ? String(log.price_per_service) : "",
@@ -1006,6 +1084,8 @@ function DetailDrawer({
     coupon: log.coupon ?? "",
     coupon_value: log.coupon_value ?? "",
     coupon_amount: log.coupon_amount != null ? String(log.coupon_amount) : "",
+    payment_amount: log.payment_amount != null ? String(log.payment_amount) : "",
+    refund_amount: log.refund_amount != null ? String(log.refund_amount) : "",
     follow_up_needed: log.follow_up_needed,
     follow_up_notes: log.follow_up_notes ?? "",
     sentiment: log.sentiment ?? "",
@@ -1018,10 +1098,12 @@ function DetailDrawer({
   }
 
   async function save() {
+    const cats = form.categories.length > 0 ? form.categories : [form.category as Category];
     const patch: Record<string, unknown> = {
       customer_name: form.customer_name.trim() || null,
       customer_id: form.customer_id.trim() || null,
-      category: form.category,
+      categories: cats,
+      category: cats[0],
       summary: form.summary.trim() || null,
       service_name: form.service_name.trim() || null,
       price_per_service: form.price_per_service ? Number(form.price_per_service) : null,
@@ -1029,6 +1111,8 @@ function DetailDrawer({
       coupon: form.coupon.trim() || null,
       coupon_value: form.coupon_value.trim() || null,
       coupon_amount: form.coupon_amount ? Number(form.coupon_amount) : null,
+      payment_amount: form.payment_amount ? Number(form.payment_amount) : null,
+      refund_amount: form.refund_amount ? Number(form.refund_amount) : null,
       follow_up_needed: form.follow_up_needed,
       follow_up_notes: form.follow_up_needed ? form.follow_up_notes.trim() || null : null,
       sentiment: form.sentiment.trim() || null,
@@ -1092,17 +1176,6 @@ function DetailDrawer({
               <EditField label="Customer ID">
                 <Input value={form.customer_id} onChange={(e) => set("customer_id", e.target.value)} />
               </EditField>
-              <EditField label="Category">
-                <select
-                  value={form.category}
-                  onChange={(e) => set("category", e.target.value as Category)}
-                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-                >
-                  {(Object.keys(CATEGORY_META) as Category[]).map((c) => (
-                    <option key={c} value={c}>{CATEGORY_META[c].label}</option>
-                  ))}
-                </select>
-              </EditField>
               <EditField label="Call date">
                 <Popover open={dateOpen} onOpenChange={setDateOpen}>
                   <PopoverTrigger asChild>
@@ -1146,7 +1219,19 @@ function DetailDrawer({
               <EditField label="Coupon $ amount">
                 <Input inputMode="decimal" value={form.coupon_amount} onChange={(e) => set("coupon_amount", e.target.value)} />
               </EditField>
+              <EditField label="Payment collected $">
+                <Input inputMode="decimal" value={form.payment_amount} onChange={(e) => set("payment_amount", e.target.value)} />
+              </EditField>
+              <EditField label="Refund $">
+                <Input inputMode="decimal" value={form.refund_amount} onChange={(e) => set("refund_amount", e.target.value)} />
+              </EditField>
             </div>
+            <EditField label="Outcomes (a call can have several — tap + to count an outcome twice)">
+              <OutcomeEditor
+                value={form.categories}
+                onChange={(next) => set("categories", next)}
+              />
+            </EditField>
             <EditField label="Summary">
               <Textarea value={form.summary} onChange={(e) => set("summary", e.target.value)} className="min-h-[80px]" />
             </EditField>

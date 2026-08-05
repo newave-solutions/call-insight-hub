@@ -4,23 +4,20 @@ import { generateObject, generateText, NoObjectGeneratedError } from "ai";
 import { z } from "zod";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 
+export const CATEGORY_VALUES = [
+  "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
+  "reschedule", "reservice", "payment", "payment_promise", "billing_update", "freeze", "refund",
+  "back_on_schedule", "inquiry", "escalation", "other",
+] as const;
+
+const CategoryZ = z.enum(CATEGORY_VALUES);
+
 const AnalysisSchema = z.object({
   // A single call can have multiple outcomes (e.g. one save + one resign, or two closes on a
   // multi-subscription household). Always return at least one entry.
-  categories: z
-    .array(z.enum([
-      "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
-      "reschedule", "reservice", "payment", "billing_update", "freeze", "refund",
-      "back_on_schedule", "other",
-    ]))
-    .nullish()
-    .default([]),
+  categories: z.array(CategoryZ).nullish().default([]),
   // Primary outcome — first/most prominent one — kept for backward compatibility & display.
-  category: z.enum([
-    "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
-    "reschedule", "reservice", "payment", "billing_update", "freeze", "refund",
-    "back_on_schedule", "other",
-  ]).default("other"),
+  category: CategoryZ.default("inquiry"),
   customer_name: z.string().nullish().default(null),
   customer_id: z.string().nullish().default(null),
   summary: z.string().nullish().default(""),
@@ -55,7 +52,20 @@ const SYSTEM_PROMPT = `You read customer service / retention call notes for SAEL
 ROLES using this app:
 - CEM (Customer Experience Manager) — retention focus: saves vs closes, resigns, leads, cancel_pending, pending_cancel, coupons.
 - CES (Customer Experience Specialist) — service focus: reschedules, free re-services (no charge), building value, resigns, leads, updating billing information, taking payments on outstanding balances, refunds.
-Categorize the call using ANY category — do not default to "other" just because you're unsure. Pick every applicable outcome from the list below. Only use "other" as an absolute last resort.
+CRITICAL: EVERY call gets at least one real outcome. NEVER return "other". If nothing else fits,
+the call is an "inquiry" (customer had questions / doubts / wanted clarification). Pick EVERY
+applicable outcome from the list below — multiple outcomes per call are normal and expected.
+
+NOTE FORMATS you will receive (both are valid — read whichever you get):
+1. A long call summary with sections (Summary / Resolution / Result).
+2. A terse agent shorthand line, e.g.:
+   "1585346 / John Doe / PPEOM / resign 119 / 50% off"
+   "1585346 PP EOM Kansas East — save, coupon 1 free service ($139)"
+   Parse a leading 7-ish-digit number as customer_id, a person name as customer_name, a service
+   shorthand as service_name (expanded), a bare number after "resign"/"reduced to"/"$" as
+   price_per_service, and "50%" / "100%" / "free service" / a dollar figure as the coupon.
+   "119" or "reduced to 119" means the new price per service is $119 (that is a resign/price
+   reduction, not a coupon, unless it says off/discount/free).
 
 DOMAIN — Saela Pest Control services (shorthand you WILL see):
 - PP = Protection Program
@@ -94,11 +104,14 @@ Categories — pick every outcome that applies (the same call can have several):
 - "reschedule": a service was rescheduled or scheduled (new appointment date).
 - "reservice": a free re-service was scheduled between regular services (no charge to customer).
 - "payment": a payment / outstanding balance was taken on the call. Populate payment_amount with the dollar amount collected (numeric).
+- "payment_promise": the customer did not pay on the call but committed to call back / pay later.
 - "billing_update": billing information (card, address, autopay) was updated. If a payment was ALSO taken, include BOTH "billing_update" and "payment".
-- "freeze": account was frozen / paused (e.g. seasonal freeze).
+- "freeze": account was frozen / paused (e.g. seasonal freeze). A FROZEN account counts the same as a close for retention purposes — use "freeze" (do not also add "closed").
 - "refund": a refund was issued to the customer. Populate refund_amount with the refunded dollar amount (numeric).
 - "back_on_schedule": customer was on "the doc" and could not be reached after 3 attempts, so they were placed back on regular schedule. Notes may say "transferred from the doc", "back on schedule", "put back on schedule".
-- "other": general inquiry, complaint, info call, etc.
+- "inquiry": customer had doubts/questions, wanted clarification, general info, a complaint, or product/value education — nothing else changed on the account. Use this instead of "other".
+- "escalation": call was escalated / transferred to a branch, field manager, or another department.
+- "other": FORBIDDEN. Never return this value.
 
 MULTI-OUTCOME CALLS (CRITICAL — do not skip):
 A single call can produce MORE THAN ONE outcome and each outcome must be tallied separately.
@@ -161,8 +174,8 @@ If follow_up_needed is false, follow_up_notes must be null.
 Return JSON matching the schema exactly. Use null for missing text; 0 for coupon_amount when no discount; false for follow_up_needed when nothing is truly pending.`;
 
 async function runExtraction(notes: string): Promise<Analysis> {
-  const model = getModel();
   try {
+    const model = getModel();
     const res = await generateObject({ model, schema: AnalysisSchema, system: SYSTEM_PROMPT, prompt: `Call notes:\n\n${notes}` });
     return normalize(res.object);
   } catch (err) {
@@ -170,14 +183,67 @@ async function runExtraction(notes: string): Promise<Analysis> {
       const raw = (err as { text?: string }).text ?? "";
       const match = raw.match(/\{[\s\S]*\}/);
       const parsed = match ? safeJson(match[0]) : null;
-      return normalize(AnalysisSchema.parse(parsed ?? {}));
+      if (parsed) {
+        const lenient = AnalysisSchema.safeParse(parsed);
+        if (lenient.success) return normalize(lenient.data);
+      }
     }
-    throw err;
+    // Never lose a call: fall back to a heuristic read of the notes.
+    return normalize(heuristicExtract(notes));
   }
 }
 
+// Last-resort local parser so a call ALWAYS gets logged even if the model is unavailable.
+const SERVICE_MAP: [RegExp, string][] = [
+  [/\bppeom\b|\bpp\s*eom\b/i, "Protection Program Every Other Month"],
+  [/\bppmps\b/i, "Perimeter Plus Mosquito Peak Season"],
+  [/\bppmos\b|\bppm\b/i, "Perimeter Plus Mosquito"],
+  [/\bryg\b/i, "Rodent Yard Guard"],
+  [/\bmos\b/i, "Mosquito Bundled"],
+  [/\bpp\s*rodent\s*plus\b/i, "Protection Program Rodent Plus"],
+  [/\bpp\b/i, "Protection Program"],
+];
+
+function heuristicExtract(notes: string): Analysis {
+  const cats: string[] = [];
+  const has = (re: RegExp) => re.test(notes);
+  if (has(/\bre-?sign(ed|ing)?\b|\bnew agreement\b|reduc\w* to/i)) cats.push("resign");
+  if (has(/\bsaved?\b|\bretain(ed)?\b/i)) cats.push("saved");
+  if (has(/\bclos(ed|ing)\b|\bcancel(l?ed)\b(?!\s*pending)/i)) cats.push("closed");
+  if (has(/\bcancel\s*pending\b/i)) cats.push("cancel_pending");
+  if (has(/\bpending\s*cancel\b|\bthe doc\b/i)) cats.push("pending_cancel");
+  if (has(/\blead\b|inside sales/i)) cats.push("lead");
+  if (has(/\breactivat/i)) cats.push("reactivation");
+  if (has(/\bre-?schedul/i)) cats.push("reschedule");
+  if (has(/\bre-?service\b|\brs\b/i)) cats.push("reservice");
+  if (has(/\bfreez|\bfrozen\b/i)) cats.push("freeze");
+  if (has(/\brefund/i)) cats.push("refund");
+  if (has(/\bpayment\b|\bpaid\b|\bbalance\b/i)) cats.push("payment");
+  if (has(/\bbilling\b|\bcard\b|\bautopay\b/i)) cats.push("billing_update");
+  if (has(/back on schedule/i)) cats.push("back_on_schedule");
+  if (has(/escalat|transferred to (branch|fm|bm)/i)) cats.push("escalation");
+  if (cats.length === 0) cats.push("inquiry");
+
+  const id = notes.match(/\b(\d{6,9})\b/)?.[1] ?? null;
+  const price = notes.match(/\$?\s?(\d{2,4}(?:\.\d{2})?)\s*(?:\/|per)?\s*(?:service|svc)?/i)?.[1];
+  const service = SERVICE_MAP.find(([re]) => re.test(notes))?.[1] ?? null;
+
+  return AnalysisSchema.parse({
+    categories: cats,
+    category: cats[0],
+    customer_id: id,
+    service_name: service,
+    price_per_service: price ? Number(price) : null,
+    summary: notes.slice(0, 400),
+    key_points: [],
+  });
+}
+
 function normalize(a: Analysis): Analysis {
-  const cats = Array.isArray(a.categories) && a.categories.length > 0 ? a.categories : [a.category];
+  const raw = Array.isArray(a.categories) && a.categories.length > 0 ? a.categories : [a.category];
+  // "other" is never allowed — an unclassified call is an inquiry.
+  const mapped = raw.map((c) => (c === "other" ? "inquiry" : c)) as Analysis["category"][];
+  const cats = mapped.length > 0 ? mapped : (["inquiry"] as Analysis["category"][]);
   return { ...a, categories: cats, category: cats[0] };
 }
 
@@ -260,7 +326,7 @@ export const bulkImportCallLogs = createServerFn({ method: "POST" })
         try {
           results[idx] = await runExtraction(data.items[idx].notes);
         } catch {
-          results[idx] = AnalysisSchema.parse({});
+          results[idx] = normalize(heuristicExtract(data.items[idx].notes));
         }
       }
     }
@@ -320,11 +386,7 @@ export const deleteCallLog = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-const CategoryEnum = z.enum([
-  "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
-  "reschedule", "reservice", "payment", "billing_update", "freeze", "refund",
-  "back_on_schedule", "other",
-]);
+const CategoryEnum = CategoryZ;
 
 const UpdateSchema = z.object({
   id: z.string().uuid(),
@@ -380,7 +442,7 @@ export const generateInsights = createServerFn({ method: "POST" })
   .handler(async ({ context }) => {
     const { data: logs, error } = await context.supabase
       .from("call_logs")
-      .select("category,customer_name,summary,agreement_length_months,price_per_service,service_name,coupon,coupon_value,coupon_amount,sentiment,follow_up_needed,key_points,call_date,created_at")
+      .select("category,categories,customer_name,summary,agreement_length_months,price_per_service,service_name,coupon,coupon_value,coupon_amount,payment_amount,refund_amount,sentiment,follow_up_needed,key_points,call_date,created_at")
       .order("call_date", { ascending: false, nullsFirst: false })
       .limit(500);
     if (error) throw new Error(error.message);
