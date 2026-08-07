@@ -6,7 +6,7 @@ New users pick their role (Customer Experience Specialist / CES or Customer Expe
 ## 1. Onboarding step
 - On first load of the dashboard, read the saved role from the user's settings.
 - If no role is saved yet, show a blocking onboarding card (centered, cannot be dismissed) with two large choices:
-  - Customer Experience Specialist — reschedules, re-services, payments, billing, inquiries.
+  - Customer Experience Specialist
   - Customer Experience Manager — saves, closes, resigns, leads, cancel-pending follow-ups.
 - Selecting one saves it immediately and drops the user into the dashboard. Existing users with a saved role never see this screen.
 - A small role badge in the dashboard header lets the user switch role at any time (traffic changes roles day to day), saving the new value the same way.
