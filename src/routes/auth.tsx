@@ -3,10 +3,10 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable/index";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { PhoneCall } from "lucide-react";
+import { Loader2, PhoneCall } from "lucide-react";
+import { EmailAuthForm } from "@/components/auth/EmailAuthForm";
+import { authErrorMessage } from "@/lib/auth-schemas";
 
 export const Route = createFileRoute("/auth")({
   component: AuthPage,
@@ -21,9 +21,7 @@ export const Route = createFileRoute("/auth")({
 function AuthPage() {
   const navigate = useNavigate();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -35,37 +33,14 @@ function AuthPage() {
     return () => sub.subscription.unsubscribe();
   }, [navigate]);
 
-  async function handleEmail(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { emailRedirectTo: window.location.origin },
-        });
-        if (error) throw error;
-        toast.success("Check your email to confirm your account.");
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Authentication failed");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   async function handleGoogle() {
-    setLoading(true);
+    setGoogleLoading(true);
     const result = await lovable.auth.signInWithOAuth("google", {
       redirect_uri: window.location.origin,
     });
     if (result.error) {
-      toast.error(result.error.message ?? "Google sign-in failed");
-      setLoading(false);
+      toast.error(authErrorMessage(result.error));
+      setGoogleLoading(false);
     }
   }
 
@@ -100,19 +75,7 @@ function AuthPage() {
             </button>
           </div>
 
-          <form onSubmit={handleEmail} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input id="password" type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} />
-            </div>
-            <Button type="submit" className="w-full" disabled={loading}>
-              {mode === "signup" ? "Create account" : "Sign in"}
-            </Button>
-          </form>
+          <EmailAuthForm mode={mode} />
 
           <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground">
             <div className="h-px flex-1 bg-border" />
@@ -120,7 +83,14 @@ function AuthPage() {
             <div className="h-px flex-1 bg-border" />
           </div>
 
-          <Button type="button" variant="outline" className="w-full" onClick={handleGoogle} disabled={loading}>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            onClick={handleGoogle}
+            disabled={googleLoading}
+          >
+            {googleLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Continue with Google
           </Button>
         </div>
