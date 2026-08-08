@@ -1296,6 +1296,8 @@ function DetailDrawerInner({
     coupon_amount: log.coupon_amount != null ? String(log.coupon_amount) : "",
     payment_amount: log.payment_amount != null ? String(log.payment_amount) : "",
     refund_amount: log.refund_amount != null ? String(log.refund_amount) : "",
+    account_label: log.account_label ?? "",
+    lead_sold: log.lead_sold ?? false,
     follow_up_needed: log.follow_up_needed,
     follow_up_notes: log.follow_up_notes ?? "",
     sentiment: log.sentiment ?? "",
@@ -1323,6 +1325,9 @@ function DetailDrawerInner({
       coupon_amount: form.coupon_amount ? Number(form.coupon_amount) : null,
       payment_amount: form.payment_amount ? Number(form.payment_amount) : null,
       refund_amount: form.refund_amount ? Number(form.refund_amount) : null,
+      account_label: form.account_label.trim() || null,
+      escalated_to_cem: cats.includes("escalated_to_cem"),
+      lead_sold: form.lead_sold && cats.includes("lead"),
       follow_up_needed: form.follow_up_needed,
       follow_up_notes: form.follow_up_needed ? form.follow_up_notes.trim() || null : null,
       sentiment: form.sentiment.trim() || null,
@@ -1434,6 +1439,20 @@ function DetailDrawerInner({
               </EditField>
               <EditField label="Refund $">
                 <Input inputMode="decimal" value={form.refund_amount} onChange={(e) => set("refund_amount", e.target.value)} />
+              </EditField>
+              <EditField label="Account / property">
+                <Input value={form.account_label} onChange={(e) => set("account_label", e.target.value)} placeholder="e.g. rental property" />
+              </EditField>
+              <EditField label="Lead sold">
+                <label className="flex h-9 items-center gap-2 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={form.lead_sold}
+                    onChange={(e) => set("lead_sold", e.target.checked)}
+                    className="h-4 w-4"
+                  />
+                  The lead sold (commission bonus)
+                </label>
               </EditField>
             </div>
             <EditField label="Outcomes (a call can have several — tap + to count an outcome twice)">
