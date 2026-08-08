@@ -322,7 +322,7 @@ function Dashboard() {
 
   const timeseries = useMemo(() => {
     // last 14 days
-    const days: { day: string; date: string; saved: number; closed: number; resign: number; coupons: number }[] = [];
+    const days: { day: string; date: string; saved: number; closed: number; resign: number; coupons: number; payments: number; refunds: number }[] = [];
     const map = new Map<string, (typeof days)[number]>();
     for (let i = 13; i >= 0; i--) {
       const d = new Date();
@@ -336,6 +336,8 @@ function Dashboard() {
         closed: 0,
         resign: 0,
         coupons: 0,
+        payments: 0,
+        refunds: 0,
       };
       days.push(entry);
       map.set(key, entry);
@@ -346,11 +348,13 @@ function Dashboard() {
       if (!e) continue;
       for (const c of logCategories(l)) {
         if (c === "saved") e.saved += 1;
-        else if (c === "closed") e.closed += 1;
+        else if (c === "closed" || c === "freeze") e.closed += 1;
         else if (c === "resign") e.resign += 1;
       }
       if (l.coupon_amount) e.coupons += Number(l.coupon_amount);
       else if (l.coupon) e.coupons += 1;
+      if (l.payment_amount) e.payments += Number(l.payment_amount);
+      if (l.refund_amount) e.refunds += Number(l.refund_amount);
     }
     return days;
   }, [logs]);
@@ -378,7 +382,10 @@ function Dashboard() {
         map.set(key, e);
       }
       e.total += 1;
-      for (const c of logCategories(l)) e.cats[c] += 1;
+      for (const c of logCategories(l)) {
+        e.cats[c] += 1;
+        if (c === "freeze") e.cats.closed += 1;
+      }
       if (l.coupon_amount) e.coupons += Number(l.coupon_amount);
       if (l.payment_amount) e.payments += Number(l.payment_amount);
       if (l.refund_amount) e.refunds += Number(l.refund_amount);
