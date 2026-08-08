@@ -767,6 +767,7 @@ function Dashboard() {
                       <LogRow
                         key={l.id}
                         log={l}
+                        role={role}
                         onSelect={() => setSelectedId(l.id)}
                         onDelete={() => deleteMut.mutate(l.id)}
                       />
