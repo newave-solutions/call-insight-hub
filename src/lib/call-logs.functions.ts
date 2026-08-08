@@ -7,7 +7,7 @@ import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 export const CATEGORY_VALUES = [
   "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
   "reschedule", "reservice", "payment", "payment_promise", "billing_update", "freeze", "refund",
-  "back_on_schedule", "inquiry", "escalation", "other",
+  "back_on_schedule", "inquiry", "escalation", "escalated_to_cem", "other",
 ] as const;
 
 const CategoryZ = z.enum(CATEGORY_VALUES);
@@ -31,6 +31,12 @@ const AnalysisSchema = z.object({
   payment_amount: z.number().nullish().default(null),
   // Refunds granted on the call.
   refund_amount: z.number().nullish().default(null),
+  // Which property/account these outcomes belong to (a customer can own several accounts).
+  account_label: z.string().nullish().default(null),
+  // CES flagged a pending cancel and handed the account to a manager.
+  escalated_to_cem: z.boolean().nullish().default(false),
+  // A lead sent to sales that actually sold (commission bonus).
+  lead_sold: z.boolean().nullish().default(false),
   follow_up_needed: z.boolean().nullish().default(false),
   follow_up_notes: z.string().nullish().default(null),
   sentiment: z.string().nullish().default(null),
