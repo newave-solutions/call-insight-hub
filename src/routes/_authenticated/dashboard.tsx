@@ -1357,6 +1357,8 @@ function DetailDrawerInner({
               <h2 className="text-lg font-semibold">{log.customer_name || "Unnamed customer"}</h2>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Badge variant="secondary">{meta.label}</Badge>
+                {log.account_label && <Badge variant="outline">{log.account_label}</Badge>}
+                <AuthorityBadge role={role} log={log} />
                 {log.customer_id && <span className="font-mono">#{log.customer_id}</span>}
                 <span>
                   {new Date(log.call_date ?? log.created_at).toLocaleDateString(undefined, {
