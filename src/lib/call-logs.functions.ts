@@ -502,7 +502,7 @@ export const generateInsights = createServerFn({ method: "POST" })
   .handler(async ({ context }) => {
     const { data: logs, error } = await context.supabase
       .from("call_logs")
-      .select("category,categories,customer_name,summary,agreement_length_months,price_per_service,service_name,coupon,coupon_value,coupon_amount,payment_amount,refund_amount,sentiment,follow_up_needed,key_points,call_date,created_at")
+      .select("category,categories,customer_name,summary,agreement_length_months,price_per_service,service_name,coupon,coupon_value,coupon_amount,payment_amount,refund_amount,account_label,escalated_to_cem,lead_sold,sentiment,follow_up_needed,key_points,call_date,created_at")
       .order("call_date", { ascending: false, nullsFirst: false })
       .limit(500);
     if (error) throw new Error(error.message);
@@ -526,7 +526,7 @@ export const generateInsights = createServerFn({ method: "POST" })
       generateText({
         model,
         system:
-          "You are a retention analyst for SAELA PEST CONTROL producing an OVERALL PERFORMANCE REVIEW across the agent's entire logged history. Grade the agent against the Saela Way customer-experience values: **building value**, **ownership**, **empathy**, **professionalism**, and **clear communication** — in addition to hard metrics. Use GitHub-flavored MARKDOWN with ## headings and - bullets. Sections REQUIRED: `## Trends over time` (month-over-month or week-over-week movement), `## Saela Way scorecard` (one bullet per value: building value, ownership, empathy, professionalism, communication — each with a short assessment and evidence from the notes), `## Strengths`, `## Weaknesses`, `## Coaching recommendations`. Then a final line exactly: `SCORE: <integer 0-100> — <one-line label>`. Score blends save rate, resign volume, coupon effectiveness, lead generation, follow-through, consistency AND Saela Way behavior. Under 360 words. Do not wrap in a code fence.",
+          "You are a retention analyst for SAELA PEST CONTROL producing an OVERALL PERFORMANCE REVIEW across the agent's entire logged history. Commission drivers: payments collected, signed resigns, leads sent to sales (bonus when sold), and — for managers — saves (a save means the customer committed to at least 2 more services); a subscription flagged pending cancel after 3 GEOC attempts should be escalated to a CEM. Grade the agent against the Saela Way customer-experience values: **building value**, **ownership**, **empathy**, **professionalism**, and **clear communication** — in addition to hard metrics. Use GitHub-flavored MARKDOWN with ## headings and - bullets. Sections REQUIRED: `## Trends over time` (month-over-month or week-over-week movement), `## Saela Way scorecard` (one bullet per value: building value, ownership, empathy, professionalism, communication — each with a short assessment and evidence from the notes), `## Strengths`, `## Weaknesses`, `## Coaching recommendations`. Then a final line exactly: `SCORE: <integer 0-100> — <one-line label>`. Score blends save rate, resign volume, coupon effectiveness, lead generation, follow-through, consistency AND Saela Way behavior. Under 360 words. Do not wrap in a code fence.",
         prompt: `Full history (${logs.length} calls):\n${JSON.stringify(logs, null, 2)}`,
       }),
     ]);
