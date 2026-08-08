@@ -181,7 +181,19 @@ function Dashboard() {
 
   const [notes, setNotes] = useState("");
   const [filter, setFilter] = useState<Category | "all">("all");
-  const [role] = useState<Role>("cem");
+  const settingsFn = useServerFn(getUserSettings);
+  const setRoleFn = useServerFn(setUserRole);
+  const settingsQuery = useQuery({ queryKey: ["user_settings"], queryFn: () => settingsFn() });
+  const roleMut = useMutation({
+    mutationFn: (r: Role) => setRoleFn({ data: { role: r } }),
+    onSuccess: (res) => {
+      qc.setQueryData(["user_settings"], { role: res.role });
+      qc.invalidateQueries({ queryKey: ["user_settings"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Could not save your role"),
+  });
+  const role: Role = settingsQuery.data?.role ?? "cem";
+  const needsOnboarding = settingsQuery.isSuccess && settingsQuery.data?.role == null;
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [callDate, setCallDate] = useState<Date>(new Date());
@@ -262,13 +274,21 @@ function Dashboard() {
       couponTotal: 0,
       paymentTotal: 0,
       refundTotal: 0,
+      leadsSold: 0,
+      escalatedToCem: 0,
       followUps: 0,
       agreementSum: 0,
       agreementCount: 0,
     };
     for (const l of logs) {
       const lcats = logCategories(l);
-      for (const c of lcats) t[c] += 1;
+      for (const c of lcats) {
+        t[c] += 1;
+        // A frozen subscription is the same retention result as a close.
+        if (c === "freeze") t.closed += 1;
+      }
+      if (l.lead_sold) t.leadsSold += 1;
+      if (l.escalated_to_cem) t.escalatedToCem += 1;
       if (lcats.includes("resign") && l.price_per_service && l.agreement_length_months) {
         t.revenue += Number(l.price_per_service) * l.agreement_length_months;
       }
@@ -294,10 +314,10 @@ function Dashboard() {
 
   const categoryPie = useMemo(
     () =>
-      (["saved", "closed", "resign", "lead", "cancel_pending", "other"] as Category[])
+      CHART_CATEGORIES_BY_ROLE[role]
         .map((c) => ({ name: CATEGORY_META[c].label, value: stats[c], key: c, fill: CATEGORY_META[c].hex }))
         .filter((d) => d.value > 0),
-    [stats],
+    [stats, role],
   );
 
   const timeseries = useMemo(() => {
