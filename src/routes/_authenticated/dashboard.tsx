@@ -448,10 +448,15 @@ function Dashboard() {
             </div>
             <span className="truncate text-sm font-semibold tracking-tight">CallInsight</span>
             <span className="ml-2 hidden text-xs text-muted-foreground sm:inline">
-              Retention command center
+              {ROLE_DEFINITIONS[role].tagline}
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <RoleSwitcher
+              role={role}
+              onChange={(r) => roleMut.mutate(r)}
+              saving={roleMut.isPending}
+            />
             <span className="hidden items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground sm:inline-flex">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> live
             </span>
@@ -464,53 +469,28 @@ function Dashboard() {
       </header>
 
       <main className="mx-auto max-w-[1400px] px-4 py-4 sm:px-6">
-        {/* KPI strip */}
+        {/* KPI strip — the outcomes that matter for the active role */}
         <section className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
-          <Kpi
-            active={filter === "saved"}
-            onClick={() => setFilter(filter === "saved" ? "all" : "saved")}
-            meta={CATEGORY_META.saved}
-            value={stats.saved}
-            label="Saved"
-          />
-          <Kpi
-            active={filter === "closed"}
-            onClick={() => setFilter(filter === "closed" ? "all" : "closed")}
-            meta={CATEGORY_META.closed}
-            value={stats.closed}
-            label="Closed"
-          />
-          <Kpi
-            active={filter === "resign"}
-            onClick={() => setFilter(filter === "resign" ? "all" : "resign")}
-            meta={CATEGORY_META.resign}
-            value={stats.resign}
-            label="Resigns"
-          />
-          <Kpi
-            active={filter === "lead"}
-            onClick={() => setFilter(filter === "lead" ? "all" : "lead")}
-            meta={CATEGORY_META.lead}
-            value={stats.lead}
-            label="Leads"
-          />
-          <Kpi
-            active={filter === "cancel_pending"}
-            onClick={() => setFilter(filter === "cancel_pending" ? "all" : "cancel_pending")}
-            meta={CATEGORY_META.cancel_pending}
-            value={stats.cancel_pending}
-            label="Cancel pending"
-          />
-          <Kpi
-            active={filter === "other"}
-            onClick={() => setFilter(filter === "other" ? "all" : "other")}
-            meta={CATEGORY_META.other}
-            value={stats.other}
-            label="Other"
-          />
-          <MiniKpi icon={FileSignature} label="Save rate" value={logs.length ? `${saveRate}%` : "—"} />
+          {KPI_BY_ROLE[role].map((c) => (
+            <Kpi
+              key={c}
+              active={filter === c}
+              onClick={() => setFilter(filter === c ? "all" : c)}
+              meta={CATEGORY_META[c]}
+              value={stats[c]}
+              label={CATEGORY_META[c].label}
+            />
+          ))}
+          {role === "cem" ? (
+            <MiniKpi icon={FileSignature} label="Save rate" value={logs.length ? `${saveRate}%` : "—"} />
+          ) : (
+            <MiniKpi icon={Wallet} label="Payments collected" value={`$${stats.paymentTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} />
+          )}
           <MiniKpi icon={CalendarClock} label="Avg agreement" value={avgAgreement ? `${avgAgreement} mo` : "—"} />
         </section>
+
+        {/* Commission strip */}
+        <CommissionStrip role={role} stats={stats} />
 
         {/* Composer + charts */}
         <section className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
