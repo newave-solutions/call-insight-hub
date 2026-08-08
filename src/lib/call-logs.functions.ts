@@ -7,7 +7,7 @@ import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 export const CATEGORY_VALUES = [
   "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
   "reschedule", "reservice", "payment", "payment_promise", "billing_update", "freeze", "refund",
-  "back_on_schedule", "inquiry", "escalation", "other",
+  "back_on_schedule", "inquiry", "escalation", "escalated_to_cem", "other",
 ] as const;
 
 const CategoryZ = z.enum(CATEGORY_VALUES);
@@ -31,6 +31,12 @@ const AnalysisSchema = z.object({
   payment_amount: z.number().nullish().default(null),
   // Refunds granted on the call.
   refund_amount: z.number().nullish().default(null),
+  // Which property/account these outcomes belong to (a customer can own several accounts).
+  account_label: z.string().nullish().default(null),
+  // CES flagged a pending cancel and handed the account to a manager.
+  escalated_to_cem: z.boolean().nullish().default(false),
+  // A lead sent to sales that actually sold (commission bonus).
+  lead_sold: z.boolean().nullish().default(false),
   follow_up_needed: z.boolean().nullish().default(false),
   follow_up_notes: z.string().nullish().default(null),
   sentiment: z.string().nullish().default(null),
@@ -49,9 +55,31 @@ function getModel() {
 
 const SYSTEM_PROMPT = `You read customer service / retention call notes for SAELA PEST CONTROL and extract structured data.
 
-ROLES using this app:
-- CEM (Customer Experience Manager) — retention focus: saves vs closes, resigns, leads, cancel_pending, pending_cancel, coupons.
-- CES (Customer Experience Specialist) — service focus: reschedules, free re-services (no charge), building value, resigns, leads, updating billing information, taking payments on outstanding balances, refunds.
+ROLES using this app (the same person moves between them depending on traffic):
+- CES (Customer Experience Specialist) — front-line retention and service. Must make at least 3 retention
+  attempts using GEOC (Gratitude, Empathy, Ownership, Clarity) before flagging an account as a Pending
+  Cancel and escalating it to a CEM. Independent authority (no Team Lead approval): PP minimum $124.99,
+  up to 30% off the next regular (REG) service, reschedule up to 2 weeks out inside the current month,
+  change service frequency OR contract length, switchover PP $109.99 ($99.99 only to match a competitor),
+  PTI / 3-day ROR PP minimum $114.99. Team Lead approval needed for: PP $109.99 (or $104.97 convenient
+  billing), discounts above 30% up to 50%, rescheduling to any other day of the current month, changing
+  frequency AND contract length together.
+- CEM (Customer Experience Manager) — higher-level escalation point for accounts a CES could not save.
+  Independent authority: PP minimum $109.99, up to 50% off OR a flat $80 discount on the next REG service,
+  reschedule to any day in the current month, change frequency OR contract length, switchover PP $104.99
+  ($80 discount only when matching a competitor), 3-day ROR PP $109.99 plus a free service, and
+  reactivation of a subscription closed/frozen within the last 6 months. Team Lead approval needed for:
+  a completely free next REG service, rescheduling outside the current month, changing frequency AND
+  contract length together.
+Commissions: CES earns on payments collected, signed resigns, and leads sent to sales (bonus if sold).
+CEM earns all of those PLUS saves.
+
+ACCOUNTS AND SUBSCRIPTIONS:
+One customer may own multiple properties, and each property is its own account. One account may carry
+multiple subscriptions, and each subscription has its own outcome. When the notes clearly describe more
+than one property/account, set account_label to a short identifier for the one the outcomes belong to
+(e.g. "Main St", "rental property", "account 2"); otherwise leave it null. Return one outcome entry per
+subscription result.
 CRITICAL: EVERY call gets at least one real outcome. NEVER return "other". If nothing else fits,
 the call is an "inquiry" (customer had questions / doubts / wanted clarification). Pick EVERY
 applicable outcome from the list below — multiple outcomes per call are normal and expected.
@@ -94,11 +122,18 @@ Example note line: "1585346 PPEOM / Patrick Blue / Dallas / RS scheduled for 07/
  -> customer_id "1585346", customer_name "Patrick Blue", service_name "Protection Program Every Other Month", branch mention "Dallas", RS scheduled for 07/03.
 
 Categories — pick every outcome that applies (the same call can have several):
-- "saved": customer wanted to cancel but was retained.
-- "closed": account/subscription was closed or canceled.
+- "saved": the subscription was retained — the customer agreed to continue for AT LEAST 2 more services.
+  This can be IMPLIED from the conversation (they accepted an offer and kept the plan) unless the customer
+  explicitly said otherwise. If the customer only agreed to ONE more service and then wants to stop, that
+  is "cancel_pending", NOT a save.
+- "closed": account/subscription was closed, cancelled, or frozen (same retention result).
 - "resign": customer signed a new agreement or renewed with new terms.
-- "reactivation": a previously closed/cancelled account was reactivated / restarted.
+  Only counts for commission when the agreement was actually signed.
+- "reactivation": a previously closed/frozen/cancelled subscription was reopened. Manager authority, and
+  only allowed within 6 months of the day it was closed/frozen. If the notes show a longer gap, still use
+  "reactivation" and mention the gap in the summary.
 - "lead": call was sent to Inside Sales for new subscription, upsell, or new service.
+  Set lead_sold = true only if the notes say the lead actually sold.
 - "cancel_pending": the customer said on THIS call that they'll take the next service and then cancel — cancellation is scheduled/pending after the next visit.
 - "pending_cancel": the account was flagged as pending cancel on the retention doc BEFORE this call, and the agent is following up to offer options. If the notes mention "from the doc", "the doc", "retention doc", or list the customer as an existing pending cancel, use this — NOT cancel_pending.
 - "reschedule": a service was rescheduled or scheduled (new appointment date).
@@ -111,6 +146,9 @@ Categories — pick every outcome that applies (the same call can have several):
 - "back_on_schedule": customer was on "the doc" and could not be reached after 3 attempts, so they were placed back on regular schedule. Notes may say "transferred from the doc", "back on schedule", "put back on schedule".
 - "inquiry": customer had doubts/questions, wanted clarification, general info, a complaint, or product/value education — nothing else changed on the account. Use this instead of "other".
 - "escalation": call was escalated / transferred to a branch, field manager, or another department.
+- "escalated_to_cem": the agent made their retention attempts (3+ GEOC attempts), could not save the
+  subscription, flagged it as a pending cancel, and handed it to a Customer Experience Manager. Include
+  "cancel_pending" or "pending_cancel" alongside it when that applies, and set escalated_to_cem = true.
 - "other": FORBIDDEN. Never return this value.
 
 MULTI-OUTCOME CALLS (CRITICAL — do not skip):
@@ -222,6 +260,7 @@ function heuristicExtract(notes: string): Analysis {
   if (has(/\bbilling\b|\bcard\b|\bautopay\b/i)) cats.push("billing_update");
   if (has(/back on schedule/i)) cats.push("back_on_schedule");
   if (has(/escalat|transferred to (branch|fm|bm)/i)) cats.push("escalation");
+  if (has(/escalat\w*\s+to\s+(a\s+)?(cem|manager)|to cem\b/i)) cats.push("escalated_to_cem");
   if (cats.length === 0) cats.push("inquiry");
 
   const id = notes.match(/\b(\d{6,9})\b/)?.[1] ?? null;
@@ -244,7 +283,14 @@ function normalize(a: Analysis): Analysis {
   // "other" is never allowed — an unclassified call is an inquiry.
   const mapped = raw.map((c) => (c === "other" ? "inquiry" : c)) as Analysis["category"][];
   const cats = mapped.length > 0 ? mapped : (["inquiry"] as Analysis["category"][]);
-  return { ...a, categories: cats, category: cats[0] };
+  return {
+    ...a,
+    categories: cats,
+    category: cats[0],
+    // Keep the boolean in sync with the outcome list — one source of truth.
+    escalated_to_cem: (a.escalated_to_cem ?? false) || cats.includes("escalated_to_cem"),
+    lead_sold: (a.lead_sold ?? false) && cats.includes("lead"),
+  };
 }
 
 function safeJson(s: string): unknown {
@@ -291,6 +337,9 @@ export const analyzeAndSaveCallLog = createServerFn({ method: "POST" })
         coupon_amount: output.coupon_amount,
         payment_amount: output.payment_amount,
         refund_amount: output.refund_amount,
+        account_label: output.account_label ?? null,
+        escalated_to_cem: output.escalated_to_cem ?? false,
+        lead_sold: output.lead_sold ?? false,
         follow_up_needed: output.follow_up_needed ?? false,
         follow_up_notes: (output.follow_up_needed ?? false) ? output.follow_up_notes : null,
         sentiment: output.sentiment,
@@ -351,6 +400,9 @@ export const bulkImportCallLogs = createServerFn({ method: "POST" })
         coupon_amount: out.coupon_amount,
         payment_amount: out.payment_amount,
         refund_amount: out.refund_amount,
+        account_label: out.account_label ?? null,
+        escalated_to_cem: out.escalated_to_cem ?? false,
+        lead_sold: out.lead_sold ?? false,
         follow_up_needed: out.follow_up_needed ?? false,
         follow_up_notes: (out.follow_up_needed ?? false) ? out.follow_up_notes : null,
         sentiment: out.sentiment,
@@ -405,6 +457,9 @@ const UpdateSchema = z.object({
       coupon_amount: z.number().nullish(),
       payment_amount: z.number().nullish(),
       refund_amount: z.number().nullish(),
+      account_label: z.string().nullish(),
+      escalated_to_cem: z.boolean().optional(),
+      lead_sold: z.boolean().optional(),
       follow_up_needed: z.boolean().optional(),
       follow_up_notes: z.string().nullish(),
       sentiment: z.string().nullish(),
@@ -424,6 +479,11 @@ export const updateCallLog = createServerFn({ method: "POST" })
     } else if (patch.category && !patch.categories) {
       patch.categories = [patch.category];
     }
+    if (Array.isArray(patch.categories)) {
+      // Keep the escalation flag in sync with the outcome list.
+      patch.escalated_to_cem = patch.categories.includes("escalated_to_cem") || patch.escalated_to_cem === true;
+      if (!patch.categories.includes("lead")) patch.lead_sold = false;
+    }
     if (typeof patch.call_date === "string" && patch.call_date) {
       patch.date_source = "user_selected";
     }
@@ -442,7 +502,7 @@ export const generateInsights = createServerFn({ method: "POST" })
   .handler(async ({ context }) => {
     const { data: logs, error } = await context.supabase
       .from("call_logs")
-      .select("category,categories,customer_name,summary,agreement_length_months,price_per_service,service_name,coupon,coupon_value,coupon_amount,payment_amount,refund_amount,sentiment,follow_up_needed,key_points,call_date,created_at")
+      .select("category,categories,customer_name,summary,agreement_length_months,price_per_service,service_name,coupon,coupon_value,coupon_amount,payment_amount,refund_amount,account_label,escalated_to_cem,lead_sold,sentiment,follow_up_needed,key_points,call_date,created_at")
       .order("call_date", { ascending: false, nullsFirst: false })
       .limit(500);
     if (error) throw new Error(error.message);
@@ -466,7 +526,7 @@ export const generateInsights = createServerFn({ method: "POST" })
       generateText({
         model,
         system:
-          "You are a retention analyst for SAELA PEST CONTROL producing an OVERALL PERFORMANCE REVIEW across the agent's entire logged history. Grade the agent against the Saela Way customer-experience values: **building value**, **ownership**, **empathy**, **professionalism**, and **clear communication** — in addition to hard metrics. Use GitHub-flavored MARKDOWN with ## headings and - bullets. Sections REQUIRED: `## Trends over time` (month-over-month or week-over-week movement), `## Saela Way scorecard` (one bullet per value: building value, ownership, empathy, professionalism, communication — each with a short assessment and evidence from the notes), `## Strengths`, `## Weaknesses`, `## Coaching recommendations`. Then a final line exactly: `SCORE: <integer 0-100> — <one-line label>`. Score blends save rate, resign volume, coupon effectiveness, lead generation, follow-through, consistency AND Saela Way behavior. Under 360 words. Do not wrap in a code fence.",
+          "You are a retention analyst for SAELA PEST CONTROL producing an OVERALL PERFORMANCE REVIEW across the agent's entire logged history. Commission drivers: payments collected, signed resigns, leads sent to sales (bonus when sold), and — for managers — saves (a save means the customer committed to at least 2 more services); a subscription flagged pending cancel after 3 GEOC attempts should be escalated to a CEM. Grade the agent against the Saela Way customer-experience values: **building value**, **ownership**, **empathy**, **professionalism**, and **clear communication** — in addition to hard metrics. Use GitHub-flavored MARKDOWN with ## headings and - bullets. Sections REQUIRED: `## Trends over time` (month-over-month or week-over-week movement), `## Saela Way scorecard` (one bullet per value: building value, ownership, empathy, professionalism, communication — each with a short assessment and evidence from the notes), `## Strengths`, `## Weaknesses`, `## Coaching recommendations`. Then a final line exactly: `SCORE: <integer 0-100> — <one-line label>`. Score blends save rate, resign volume, coupon effectiveness, lead generation, follow-through, consistency AND Saela Way behavior. Under 360 words. Do not wrap in a code fence.",
         prompt: `Full history (${logs.length} calls):\n${JSON.stringify(logs, null, 2)}`,
       }),
     ]);
@@ -495,6 +555,9 @@ const ManualSchema = z.object({
   coupon_amount: z.number().nullish(),
   payment_amount: z.number().nullish(),
   refund_amount: z.number().nullish(),
+  account_label: z.string().nullish(),
+  escalated_to_cem: z.boolean().default(false),
+  lead_sold: z.boolean().default(false),
   follow_up_needed: z.boolean().default(false),
   follow_up_notes: z.string().nullish(),
   sentiment: z.string().nullish(),
@@ -525,6 +588,9 @@ export const createManualCallLog = createServerFn({ method: "POST" })
         coupon_amount: data.coupon_amount ?? null,
         payment_amount: data.payment_amount ?? null,
         refund_amount: data.refund_amount ?? null,
+        account_label: data.account_label ?? null,
+        escalated_to_cem: data.escalated_to_cem || data.categories.includes("escalated_to_cem"),
+        lead_sold: data.lead_sold && data.categories.includes("lead"),
         follow_up_needed: data.follow_up_needed,
         follow_up_notes: data.follow_up_needed ? data.follow_up_notes ?? null : null,
         sentiment: data.sentiment ?? null,

@@ -86,6 +86,12 @@ import {
   UserCog,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  COMMISSION_CATEGORIES,
+  ROLE_DEFINITIONS,
+  evaluateAuthority,
+  type Role,
+} from "@/lib/role-policy";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -103,16 +109,16 @@ type Category =
   | "saved" | "closed" | "resign" | "reactivation" | "lead"
   | "cancel_pending" | "pending_cancel"
   | "reschedule" | "reservice" | "payment" | "payment_promise" | "billing_update"
-  | "freeze" | "refund" | "back_on_schedule" | "inquiry" | "escalation" | "other";
+  | "freeze" | "refund" | "back_on_schedule" | "inquiry" | "escalation"
+  | "escalated_to_cem" | "other";
 
 const ALL_CATEGORIES: Category[] = [
   "saved", "closed", "resign", "reactivation", "lead",
   "cancel_pending", "pending_cancel",
   "reschedule", "reservice", "payment", "payment_promise", "billing_update",
-  "freeze", "refund", "back_on_schedule", "inquiry", "escalation", "other",
+  "freeze", "refund", "back_on_schedule", "inquiry", "escalation",
+  "escalated_to_cem", "other",
 ];
-
-type Role = "ces" | "cem";
 
 function logCategories(l: { categories?: string[] | null; category: string }): Category[] {
   const arr = Array.isArray(l.categories) && l.categories.length > 0 ? l.categories : [l.category];
@@ -131,7 +137,7 @@ const CATEGORY_META: Record<
   { label: string; icon: typeof Shield; color: string; dot: string; hex: string }
 > = {
   saved: { label: "Saved", icon: Shield, color: "text-emerald-600 bg-emerald-500/10", dot: "bg-emerald-500", hex: "#10b981" },
-  closed: { label: "Closed", icon: Ban, color: "text-rose-600 bg-rose-500/10", dot: "bg-rose-500", hex: "#f43f5e" },
+  closed: { label: "Closed / Frozen", icon: Ban, color: "text-rose-600 bg-rose-500/10", dot: "bg-rose-500", hex: "#f43f5e" },
   resign: { label: "Resign", icon: FileSignature, color: "text-blue-600 bg-blue-500/10", dot: "bg-blue-500", hex: "#3b82f6" },
   reactivation: { label: "Reactivation", icon: RefreshCw, color: "text-cyan-600 bg-cyan-500/10", dot: "bg-cyan-500", hex: "#06b6d4" },
   lead: { label: "Lead", icon: TrendingUp, color: "text-amber-600 bg-amber-500/10", dot: "bg-amber-500", hex: "#f59e0b" },
@@ -147,13 +153,20 @@ const CATEGORY_META: Record<
   payment_promise: { label: "Payment Promised", icon: Wallet, color: "text-lime-700 bg-lime-500/10", dot: "bg-lime-500", hex: "#65a30d" },
   inquiry: { label: "Inquiry / Doubts", icon: MessageSquare, color: "text-violet-600 bg-violet-500/10", dot: "bg-violet-500", hex: "#8b5cf6" },
   escalation: { label: "Escalation", icon: BellRing, color: "text-orange-700 bg-orange-600/10", dot: "bg-orange-600", hex: "#ea580c" },
+  escalated_to_cem: { label: "Escalated to CEM", icon: UserCog, color: "text-purple-700 bg-purple-500/10", dot: "bg-purple-500", hex: "#a855f7" },
   other: { label: "Other", icon: MessageSquare, color: "text-muted-foreground bg-muted", dot: "bg-muted-foreground/60", hex: "#94a3b8" },
 };
 
 // Which category chips get top-of-page KPI cards per role.
 const KPI_BY_ROLE: Record<Role, Category[]> = {
-  cem: ["saved", "closed", "resign", "lead", "cancel_pending", "pending_cancel", "reactivation", "inquiry"],
-  ces: ["reschedule", "reservice", "payment", "billing_update", "refund", "resign", "lead", "inquiry"],
+  cem: ["saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel", "inquiry"],
+  ces: ["reschedule", "reservice", "payment", "payment_promise", "billing_update", "refund", "resign", "escalated_to_cem"],
+};
+
+// Which outcomes drive the trend chart + category mix per role.
+const CHART_CATEGORIES_BY_ROLE: Record<Role, Category[]> = {
+  cem: ["saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel"],
+  ces: ["reschedule", "reservice", "payment", "payment_promise", "billing_update", "refund", "resign", "lead", "inquiry", "escalated_to_cem"],
 };
 
 function Dashboard() {
@@ -168,7 +181,19 @@ function Dashboard() {
 
   const [notes, setNotes] = useState("");
   const [filter, setFilter] = useState<Category | "all">("all");
-  const [role] = useState<Role>("cem");
+  const settingsFn = useServerFn(getUserSettings);
+  const setRoleFn = useServerFn(setUserRole);
+  const settingsQuery = useQuery({ queryKey: ["user_settings"], queryFn: () => settingsFn() });
+  const roleMut = useMutation({
+    mutationFn: (r: Role) => setRoleFn({ data: { role: r } }),
+    onSuccess: (res) => {
+      qc.setQueryData(["user_settings"], { role: res.role });
+      qc.invalidateQueries({ queryKey: ["user_settings"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Could not save your role"),
+  });
+  const role: Role = settingsQuery.data?.role ?? "cem";
+  const needsOnboarding = settingsQuery.isSuccess && settingsQuery.data?.role == null;
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [callDate, setCallDate] = useState<Date>(new Date());
@@ -249,13 +274,21 @@ function Dashboard() {
       couponTotal: 0,
       paymentTotal: 0,
       refundTotal: 0,
+      leadsSold: 0,
+      escalatedToCem: 0,
       followUps: 0,
       agreementSum: 0,
       agreementCount: 0,
     };
     for (const l of logs) {
       const lcats = logCategories(l);
-      for (const c of lcats) t[c] += 1;
+      for (const c of lcats) {
+        t[c] += 1;
+        // A frozen subscription is the same retention result as a close.
+        if (c === "freeze") t.closed += 1;
+      }
+      if (l.lead_sold) t.leadsSold += 1;
+      if (l.escalated_to_cem) t.escalatedToCem += 1;
       if (lcats.includes("resign") && l.price_per_service && l.agreement_length_months) {
         t.revenue += Number(l.price_per_service) * l.agreement_length_months;
       }
@@ -281,15 +314,15 @@ function Dashboard() {
 
   const categoryPie = useMemo(
     () =>
-      (["saved", "closed", "resign", "lead", "cancel_pending", "other"] as Category[])
+      CHART_CATEGORIES_BY_ROLE[role]
         .map((c) => ({ name: CATEGORY_META[c].label, value: stats[c], key: c, fill: CATEGORY_META[c].hex }))
         .filter((d) => d.value > 0),
-    [stats],
+    [stats, role],
   );
 
   const timeseries = useMemo(() => {
     // last 14 days
-    const days: { day: string; date: string; saved: number; closed: number; resign: number; coupons: number }[] = [];
+    const days: { day: string; date: string; saved: number; closed: number; resign: number; coupons: number; payments: number; refunds: number }[] = [];
     const map = new Map<string, (typeof days)[number]>();
     for (let i = 13; i >= 0; i--) {
       const d = new Date();
@@ -303,6 +336,8 @@ function Dashboard() {
         closed: 0,
         resign: 0,
         coupons: 0,
+        payments: 0,
+        refunds: 0,
       };
       days.push(entry);
       map.set(key, entry);
@@ -313,11 +348,13 @@ function Dashboard() {
       if (!e) continue;
       for (const c of logCategories(l)) {
         if (c === "saved") e.saved += 1;
-        else if (c === "closed") e.closed += 1;
+        else if (c === "closed" || c === "freeze") e.closed += 1;
         else if (c === "resign") e.resign += 1;
       }
       if (l.coupon_amount) e.coupons += Number(l.coupon_amount);
       else if (l.coupon) e.coupons += 1;
+      if (l.payment_amount) e.payments += Number(l.payment_amount);
+      if (l.refund_amount) e.refunds += Number(l.refund_amount);
     }
     return days;
   }, [logs]);
@@ -345,7 +382,10 @@ function Dashboard() {
         map.set(key, e);
       }
       e.total += 1;
-      for (const c of logCategories(l)) e.cats[c] += 1;
+      for (const c of logCategories(l)) {
+        e.cats[c] += 1;
+        if (c === "freeze") e.cats.closed += 1;
+      }
       if (l.coupon_amount) e.coupons += Number(l.coupon_amount);
       if (l.payment_amount) e.payments += Number(l.payment_amount);
       if (l.refund_amount) e.refunds += Number(l.refund_amount);
@@ -398,6 +438,14 @@ function Dashboard() {
     analyzeMut.mutate({ notes: trimmed, callDate: callDate.toISOString() });
   }
 
+  // Returning users never see the onboarding card; hold the shell until the role resolves.
+  if (settingsQuery.isPending) {
+    return <div className="min-h-screen bg-background" />;
+  }
+  if (needsOnboarding) {
+    return <RoleOnboarding onPick={(r) => roleMut.mutate(r)} saving={roleMut.isPending} />;
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur">
@@ -408,10 +456,15 @@ function Dashboard() {
             </div>
             <span className="truncate text-sm font-semibold tracking-tight">CallInsight</span>
             <span className="ml-2 hidden text-xs text-muted-foreground sm:inline">
-              Retention command center
+              {ROLE_DEFINITIONS[role].tagline}
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <RoleSwitcher
+              role={role}
+              onChange={(r) => roleMut.mutate(r)}
+              saving={roleMut.isPending}
+            />
             <span className="hidden items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground sm:inline-flex">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> live
             </span>
@@ -424,53 +477,28 @@ function Dashboard() {
       </header>
 
       <main className="mx-auto max-w-[1400px] px-4 py-4 sm:px-6">
-        {/* KPI strip */}
+        {/* KPI strip — the outcomes that matter for the active role */}
         <section className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
-          <Kpi
-            active={filter === "saved"}
-            onClick={() => setFilter(filter === "saved" ? "all" : "saved")}
-            meta={CATEGORY_META.saved}
-            value={stats.saved}
-            label="Saved"
-          />
-          <Kpi
-            active={filter === "closed"}
-            onClick={() => setFilter(filter === "closed" ? "all" : "closed")}
-            meta={CATEGORY_META.closed}
-            value={stats.closed}
-            label="Closed"
-          />
-          <Kpi
-            active={filter === "resign"}
-            onClick={() => setFilter(filter === "resign" ? "all" : "resign")}
-            meta={CATEGORY_META.resign}
-            value={stats.resign}
-            label="Resigns"
-          />
-          <Kpi
-            active={filter === "lead"}
-            onClick={() => setFilter(filter === "lead" ? "all" : "lead")}
-            meta={CATEGORY_META.lead}
-            value={stats.lead}
-            label="Leads"
-          />
-          <Kpi
-            active={filter === "cancel_pending"}
-            onClick={() => setFilter(filter === "cancel_pending" ? "all" : "cancel_pending")}
-            meta={CATEGORY_META.cancel_pending}
-            value={stats.cancel_pending}
-            label="Cancel pending"
-          />
-          <Kpi
-            active={filter === "other"}
-            onClick={() => setFilter(filter === "other" ? "all" : "other")}
-            meta={CATEGORY_META.other}
-            value={stats.other}
-            label="Other"
-          />
-          <MiniKpi icon={FileSignature} label="Save rate" value={logs.length ? `${saveRate}%` : "—"} />
+          {KPI_BY_ROLE[role].map((c) => (
+            <Kpi
+              key={c}
+              active={filter === c}
+              onClick={() => setFilter(filter === c ? "all" : c)}
+              meta={CATEGORY_META[c]}
+              value={stats[c]}
+              label={CATEGORY_META[c].label}
+            />
+          ))}
+          {role === "cem" ? (
+            <MiniKpi icon={FileSignature} label="Save rate" value={logs.length ? `${saveRate}%` : "—"} />
+          ) : (
+            <MiniKpi icon={Wallet} label="Payments collected" value={`$${stats.paymentTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} />
+          )}
           <MiniKpi icon={CalendarClock} label="Avg agreement" value={avgAgreement ? `${avgAgreement} mo` : "—"} />
         </section>
+
+        {/* Commission strip */}
+        <CommissionStrip role={role} stats={stats} />
 
         {/* Composer + charts */}
         <section className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -561,20 +589,36 @@ function Dashboard() {
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <ChartCard title="Outcomes (14d)">
-              <ResponsiveContainer width="100%" height={140}>
-                <BarChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
-                  <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
-                  <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
-                  <Tooltip contentStyle={{ fontSize: 11 }} />
-                  <Bar dataKey="saved" stackId="a" fill={CATEGORY_META.saved.hex} radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="resign" stackId="a" fill={CATEGORY_META.resign.hex} />
-                  <Bar dataKey="closed" stackId="a" fill={CATEGORY_META.closed.hex} radius={[3, 3, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-              <Legend items={[["Saved", CATEGORY_META.saved.hex], ["Resign", CATEGORY_META.resign.hex], ["Closed", CATEGORY_META.closed.hex]]} />
-            </ChartCard>
+            {role === "cem" ? (
+              <ChartCard title="Retention outcomes (14d)">
+                <ResponsiveContainer width="100%" height={140}>
+                  <BarChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
+                    <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
+                    <Tooltip contentStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="saved" stackId="a" fill={CATEGORY_META.saved.hex} radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="resign" stackId="a" fill={CATEGORY_META.resign.hex} />
+                    <Bar dataKey="closed" stackId="a" fill={CATEGORY_META.closed.hex} radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+                <Legend items={[["Saved", CATEGORY_META.saved.hex], ["Resign", CATEGORY_META.resign.hex], ["Closed / frozen", CATEGORY_META.closed.hex]]} />
+              </ChartCard>
+            ) : (
+              <ChartCard title="Payments vs refunds $ / day (14d)">
+                <ResponsiveContainer width="100%" height={140}>
+                  <BarChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
+                    <YAxis tick={{ fontSize: 10 }} width={28} />
+                    <Tooltip contentStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="payments" fill={CATEGORY_META.payment.hex} radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="refunds" fill={CATEGORY_META.refund.hex} radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+                <Legend items={[["Payments", CATEGORY_META.payment.hex], ["Refunds", CATEGORY_META.refund.hex]]} />
+              </ChartCard>
+            )}
 
             <ChartCard title="Category mix">
               {categoryPie.length === 0 ? (
@@ -723,6 +767,7 @@ function Dashboard() {
                       <LogRow
                         key={l.id}
                         log={l}
+                        role={role}
                         onSelect={() => setSelectedId(l.id)}
                         onDelete={() => deleteMut.mutate(l.id)}
                       />
@@ -796,6 +841,7 @@ function Dashboard() {
       {selected && (
         <DetailDrawer
           log={selected}
+          role={role}
           onClose={() => setSelectedId(null)}
           onDelete={() => deleteMut.mutate(selected.id)}
           onSave={(patch) => updateMut.mutateAsync({ id: selected.id, patch })}
@@ -853,6 +899,164 @@ function MiniKpi({ icon: Icon, label, value }: { icon: typeof DollarSign; label:
   );
 }
 
+/** Header control that lets the agent switch roles when traffic moves them. */
+function RoleSwitcher({
+  role,
+  onChange,
+  saving,
+}: {
+  role: Role;
+  onChange: (r: Role) => void;
+  saving: boolean;
+}) {
+  return (
+    <div className="flex items-center rounded-full border bg-card p-0.5">
+      {(["ces", "cem"] as Role[]).map((r) => (
+        <button
+          key={r}
+          type="button"
+          disabled={saving}
+          onClick={() => r !== role && onChange(r)}
+          title={ROLE_DEFINITIONS[r].name}
+          className={cn(
+            "rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:opacity-60",
+            r === role ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {ROLE_DEFINITIONS[r].short}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Role-specific commission drivers, straight from department policy. */
+function CommissionStrip({
+  role,
+  stats,
+}: {
+  role: Role;
+  stats: Record<string, number>;
+}) {
+  const cats = COMMISSION_CATEGORIES[role];
+  return (
+    <section className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border bg-card px-3 py-2 shadow-sm">
+      <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <Wallet className="h-3.5 w-3.5" /> Commission drivers · {ROLE_DEFINITIONS[role].short}
+      </span>
+      {cats.includes("saved") && (
+        <CommissionStat label="Saves" value={String(stats.saved ?? 0)} />
+      )}
+      <CommissionStat
+        label="Payments collected"
+        value={`$${(stats.paymentTotal ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+      />
+      <CommissionStat label="Signed resigns" value={String(stats.resign ?? 0)} />
+      <CommissionStat
+        label="Leads sent"
+        value={`${stats.lead ?? 0}${stats.leadsSold ? ` (${stats.leadsSold} sold)` : ""}`}
+      />
+      {role === "ces" && <CommissionStat label="Escalated to CEM" value={String(stats.escalatedToCem ?? 0)} />}
+      {(stats.refundTotal ?? 0) > 0 && (
+        <CommissionStat
+          label="Refunds issued"
+          value={`$${(stats.refundTotal ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+        />
+      )}
+    </section>
+  );
+}
+
+function CommissionStat({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="flex flex-col">
+      <span className="text-sm font-semibold tabular-nums leading-none">{value}</span>
+      <span className="mt-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">{label}</span>
+    </span>
+  );
+}
+
+/** Blocking first-run screen: pick the role before the dashboard is usable. */
+function RoleOnboarding({ onPick, saving }: { onPick: (r: Role) => void; saving: boolean }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-10">
+      <div className="w-full max-w-3xl">
+        <div className="text-center">
+          <div className="mx-auto grid h-10 w-10 place-items-center rounded-xl bg-primary text-primary-foreground">
+            <UserCog className="h-5 w-5" />
+          </div>
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight">Which seat are you in?</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Your role decides which outcomes, authority limits, and commission drivers the dashboard shows.
+            You can switch it any time from the header.
+          </p>
+        </div>
+        <div className="mt-6 grid gap-3 md:grid-cols-2">
+          {(["ces", "cem"] as Role[]).map((r) => {
+            const def = ROLE_DEFINITIONS[r];
+            return (
+              <button
+                key={r}
+                type="button"
+                disabled={saving}
+                onClick={() => onPick(r)}
+                className="rounded-xl border bg-card p-4 text-left shadow-sm transition-all hover:border-primary hover:shadow-md disabled:opacity-60"
+              >
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="text-[10px]">{def.short}</Badge>
+                  <span className="text-sm font-semibold">{def.name}</span>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">{def.description}</p>
+                <div className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Independent authority
+                </div>
+                <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                  {def.independent.slice(0, 4).map((i) => (
+                    <li key={i}>· {i}</li>
+                  ))}
+                </ul>
+                <div className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Commission
+                </div>
+                <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                  {def.commission.map((i) => (
+                    <li key={i}>· {i}</li>
+                  ))}
+                </ul>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Compares a recorded offer to the active role's documented limits. */
+function AuthorityBadge({
+  role,
+  log,
+}: {
+  role: Role;
+  log: { price_per_service?: number | string | null; coupon_amount?: number | string | null; coupon_value?: string | null };
+}) {
+  const result = evaluateAuthority(role, log);
+  if (result.level === "within") return null;
+  return (
+    <span
+      title={result.reasons.join(" · ")}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+        result.level === "approval"
+          ? "bg-amber-500/10 text-amber-700"
+          : "bg-rose-500/10 text-rose-700",
+      )}
+    >
+      <Shield className="h-3 w-3" /> {result.label}
+    </span>
+  );
+}
+
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border bg-card p-3 shadow-sm">
@@ -885,7 +1089,7 @@ function EmptyChart() {
 
 type Log = Awaited<ReturnType<typeof listCallLogs>>[number];
 
-function LogRow({ log, onSelect, onDelete }: { log: Log; onSelect: () => void; onDelete: () => void }) {
+function LogRow({ log, role, onSelect, onDelete }: { log: Log; role: Role; onSelect: () => void; onDelete: () => void }) {
   const cats = logCategories(log);
   const details =
     cats.includes("resign")
@@ -901,6 +1105,9 @@ function LogRow({ log, onSelect, onDelete }: { log: Log; onSelect: () => void; o
     <TableRow onClick={onSelect} className="cursor-pointer text-xs">
       <TableCell className="max-w-[160px] py-2 font-medium">
         <div className="truncate">{log.customer_name || "—"}</div>
+        {log.account_label && (
+          <div className="truncate text-[10px] text-muted-foreground">{log.account_label}</div>
+        )}
       </TableCell>
       <TableCell className="py-2 font-mono text-[11px] text-muted-foreground">
         {log.customer_id || "—"}
@@ -919,6 +1126,10 @@ function LogRow({ log, onSelect, onDelete }: { log: Log; onSelect: () => void; o
           {cats.length > 1 && (
             <span className="rounded-md bg-primary/10 px-1 py-0.5 text-[9px] font-bold uppercase text-primary">×{cats.length}</span>
           )}
+          {log.lead_sold && (
+            <span className="rounded-md bg-emerald-500/10 px-1 py-0.5 text-[9px] font-bold uppercase text-emerald-700">sold</span>
+          )}
+          <AuthorityBadge role={role} log={log} />
         </div>
       </TableCell>
       <TableCell className="max-w-[280px] py-2 text-muted-foreground">
@@ -983,18 +1194,20 @@ function LogRow({ log, onSelect, onDelete }: { log: Log; onSelect: () => void; o
 
 function DetailDrawer({
   log,
+  role,
   onClose,
   onDelete,
   onSave,
   saving,
 }: {
   log: Log;
+  role: Role;
   onClose: () => void;
   onDelete: () => void;
   onSave: (patch: Partial<Record<string, unknown>>) => Promise<unknown>;
   saving: boolean;
 }) {
-  return <DetailDrawerInner log={log} onClose={onClose} onDelete={onDelete} onSave={onSave} saving={saving} />;
+  return <DetailDrawerInner log={log} role={role} onClose={onClose} onDelete={onDelete} onSave={onSave} saving={saving} />;
 }
 
 // Multi-outcome picker: one call can carry several outcomes, and the same outcome twice
@@ -1057,12 +1270,14 @@ function OutcomeEditor({
 
 function DetailDrawerInner({
   log,
+  role,
   onClose,
   onDelete,
   onSave,
   saving,
 }: {
   log: Log;
+  role: Role;
   onClose: () => void;
   onDelete: () => void;
   onSave: (patch: Partial<Record<string, unknown>>) => Promise<unknown>;
@@ -1086,6 +1301,8 @@ function DetailDrawerInner({
     coupon_amount: log.coupon_amount != null ? String(log.coupon_amount) : "",
     payment_amount: log.payment_amount != null ? String(log.payment_amount) : "",
     refund_amount: log.refund_amount != null ? String(log.refund_amount) : "",
+    account_label: log.account_label ?? "",
+    lead_sold: log.lead_sold ?? false,
     follow_up_needed: log.follow_up_needed,
     follow_up_notes: log.follow_up_notes ?? "",
     sentiment: log.sentiment ?? "",
@@ -1113,6 +1330,9 @@ function DetailDrawerInner({
       coupon_amount: form.coupon_amount ? Number(form.coupon_amount) : null,
       payment_amount: form.payment_amount ? Number(form.payment_amount) : null,
       refund_amount: form.refund_amount ? Number(form.refund_amount) : null,
+      account_label: form.account_label.trim() || null,
+      escalated_to_cem: cats.includes("escalated_to_cem"),
+      lead_sold: form.lead_sold && cats.includes("lead"),
       follow_up_needed: form.follow_up_needed,
       follow_up_notes: form.follow_up_needed ? form.follow_up_notes.trim() || null : null,
       sentiment: form.sentiment.trim() || null,
@@ -1137,6 +1357,8 @@ function DetailDrawerInner({
               <h2 className="text-lg font-semibold">{log.customer_name || "Unnamed customer"}</h2>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Badge variant="secondary">{meta.label}</Badge>
+                {log.account_label && <Badge variant="outline">{log.account_label}</Badge>}
+                <AuthorityBadge role={role} log={log} />
                 {log.customer_id && <span className="font-mono">#{log.customer_id}</span>}
                 <span>
                   {new Date(log.call_date ?? log.created_at).toLocaleDateString(undefined, {
@@ -1224,6 +1446,20 @@ function DetailDrawerInner({
               </EditField>
               <EditField label="Refund $">
                 <Input inputMode="decimal" value={form.refund_amount} onChange={(e) => set("refund_amount", e.target.value)} />
+              </EditField>
+              <EditField label="Account / property">
+                <Input value={form.account_label} onChange={(e) => set("account_label", e.target.value)} placeholder="e.g. rental property" />
+              </EditField>
+              <EditField label="Lead sold">
+                <label className="flex h-9 items-center gap-2 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={form.lead_sold}
+                    onChange={(e) => set("lead_sold", e.target.checked)}
+                    className="h-4 w-4"
+                  />
+                  The lead sold (commission bonus)
+                </label>
               </EditField>
             </div>
             <EditField label="Outcomes (a call can have several — tap + to count an outcome twice)">
