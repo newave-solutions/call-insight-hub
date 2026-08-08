@@ -589,20 +589,36 @@ function Dashboard() {
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <ChartCard title="Outcomes (14d)">
-              <ResponsiveContainer width="100%" height={140}>
-                <BarChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
-                  <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
-                  <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
-                  <Tooltip contentStyle={{ fontSize: 11 }} />
-                  <Bar dataKey="saved" stackId="a" fill={CATEGORY_META.saved.hex} radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="resign" stackId="a" fill={CATEGORY_META.resign.hex} />
-                  <Bar dataKey="closed" stackId="a" fill={CATEGORY_META.closed.hex} radius={[3, 3, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-              <Legend items={[["Saved", CATEGORY_META.saved.hex], ["Resign", CATEGORY_META.resign.hex], ["Closed", CATEGORY_META.closed.hex]]} />
-            </ChartCard>
+            {role === "cem" ? (
+              <ChartCard title="Retention outcomes (14d)">
+                <ResponsiveContainer width="100%" height={140}>
+                  <BarChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
+                    <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
+                    <Tooltip contentStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="saved" stackId="a" fill={CATEGORY_META.saved.hex} radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="resign" stackId="a" fill={CATEGORY_META.resign.hex} />
+                    <Bar dataKey="closed" stackId="a" fill={CATEGORY_META.closed.hex} radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+                <Legend items={[["Saved", CATEGORY_META.saved.hex], ["Resign", CATEGORY_META.resign.hex], ["Closed / frozen", CATEGORY_META.closed.hex]]} />
+              </ChartCard>
+            ) : (
+              <ChartCard title="Payments vs refunds $ / day (14d)">
+                <ResponsiveContainer width="100%" height={140}>
+                  <BarChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
+                    <YAxis tick={{ fontSize: 10 }} width={28} />
+                    <Tooltip contentStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="payments" fill={CATEGORY_META.payment.hex} radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="refunds" fill={CATEGORY_META.refund.hex} radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+                <Legend items={[["Payments", CATEGORY_META.payment.hex], ["Refunds", CATEGORY_META.refund.hex]]} />
+              </ChartCard>
+            )}
 
             <ChartCard title="Category mix">
               {categoryPie.length === 0 ? (
