@@ -873,6 +873,164 @@ function MiniKpi({ icon: Icon, label, value }: { icon: typeof DollarSign; label:
   );
 }
 
+/** Header control that lets the agent switch roles when traffic moves them. */
+function RoleSwitcher({
+  role,
+  onChange,
+  saving,
+}: {
+  role: Role;
+  onChange: (r: Role) => void;
+  saving: boolean;
+}) {
+  return (
+    <div className="flex items-center rounded-full border bg-card p-0.5">
+      {(["ces", "cem"] as Role[]).map((r) => (
+        <button
+          key={r}
+          type="button"
+          disabled={saving}
+          onClick={() => r !== role && onChange(r)}
+          title={ROLE_DEFINITIONS[r].name}
+          className={cn(
+            "rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:opacity-60",
+            r === role ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {ROLE_DEFINITIONS[r].short}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Role-specific commission drivers, straight from department policy. */
+function CommissionStrip({
+  role,
+  stats,
+}: {
+  role: Role;
+  stats: Record<string, number>;
+}) {
+  const cats = COMMISSION_CATEGORIES[role];
+  return (
+    <section className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border bg-card px-3 py-2 shadow-sm">
+      <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <Wallet className="h-3.5 w-3.5" /> Commission drivers · {ROLE_DEFINITIONS[role].short}
+      </span>
+      {cats.includes("saved") && (
+        <CommissionStat label="Saves" value={String(stats.saved ?? 0)} />
+      )}
+      <CommissionStat
+        label="Payments collected"
+        value={`$${(stats.paymentTotal ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+      />
+      <CommissionStat label="Signed resigns" value={String(stats.resign ?? 0)} />
+      <CommissionStat
+        label="Leads sent"
+        value={`${stats.lead ?? 0}${stats.leadsSold ? ` (${stats.leadsSold} sold)` : ""}`}
+      />
+      {role === "ces" && <CommissionStat label="Escalated to CEM" value={String(stats.escalatedToCem ?? 0)} />}
+      {(stats.refundTotal ?? 0) > 0 && (
+        <CommissionStat
+          label="Refunds issued"
+          value={`$${(stats.refundTotal ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+        />
+      )}
+    </section>
+  );
+}
+
+function CommissionStat({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="flex flex-col">
+      <span className="text-sm font-semibold tabular-nums leading-none">{value}</span>
+      <span className="mt-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">{label}</span>
+    </span>
+  );
+}
+
+/** Blocking first-run screen: pick the role before the dashboard is usable. */
+function RoleOnboarding({ onPick, saving }: { onPick: (r: Role) => void; saving: boolean }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-10">
+      <div className="w-full max-w-3xl">
+        <div className="text-center">
+          <div className="mx-auto grid h-10 w-10 place-items-center rounded-xl bg-primary text-primary-foreground">
+            <UserCog className="h-5 w-5" />
+          </div>
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight">Which seat are you in?</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Your role decides which outcomes, authority limits, and commission drivers the dashboard shows.
+            You can switch it any time from the header.
+          </p>
+        </div>
+        <div className="mt-6 grid gap-3 md:grid-cols-2">
+          {(["ces", "cem"] as Role[]).map((r) => {
+            const def = ROLE_DEFINITIONS[r];
+            return (
+              <button
+                key={r}
+                type="button"
+                disabled={saving}
+                onClick={() => onPick(r)}
+                className="rounded-xl border bg-card p-4 text-left shadow-sm transition-all hover:border-primary hover:shadow-md disabled:opacity-60"
+              >
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="text-[10px]">{def.short}</Badge>
+                  <span className="text-sm font-semibold">{def.name}</span>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">{def.description}</p>
+                <div className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Independent authority
+                </div>
+                <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                  {def.independent.slice(0, 4).map((i) => (
+                    <li key={i}>· {i}</li>
+                  ))}
+                </ul>
+                <div className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Commission
+                </div>
+                <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                  {def.commission.map((i) => (
+                    <li key={i}>· {i}</li>
+                  ))}
+                </ul>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Compares a recorded offer to the active role's documented limits. */
+function AuthorityBadge({
+  role,
+  log,
+}: {
+  role: Role;
+  log: { price_per_service?: number | string | null; coupon_amount?: number | string | null; coupon_value?: string | null };
+}) {
+  const result = evaluateAuthority(role, log);
+  if (result.level === "within") return null;
+  return (
+    <span
+      title={result.reasons.join(" · ")}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+        result.level === "approval"
+          ? "bg-amber-500/10 text-amber-700"
+          : "bg-rose-500/10 text-rose-700",
+      )}
+    >
+      <Shield className="h-3 w-3" /> {result.label}
+    </span>
+  );
+}
+
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border bg-card p-3 shadow-sm">
