@@ -260,6 +260,7 @@ function heuristicExtract(notes: string): Analysis {
   if (has(/\bbilling\b|\bcard\b|\bautopay\b/i)) cats.push("billing_update");
   if (has(/back on schedule/i)) cats.push("back_on_schedule");
   if (has(/escalat|transferred to (branch|fm|bm)/i)) cats.push("escalation");
+  if (has(/escalat\w*\s+to\s+(a\s+)?(cem|manager)|to cem\b/i)) cats.push("escalated_to_cem");
   if (cats.length === 0) cats.push("inquiry");
 
   const id = notes.match(/\b(\d{6,9})\b/)?.[1] ?? null;
@@ -282,7 +283,14 @@ function normalize(a: Analysis): Analysis {
   // "other" is never allowed — an unclassified call is an inquiry.
   const mapped = raw.map((c) => (c === "other" ? "inquiry" : c)) as Analysis["category"][];
   const cats = mapped.length > 0 ? mapped : (["inquiry"] as Analysis["category"][]);
-  return { ...a, categories: cats, category: cats[0] };
+  return {
+    ...a,
+    categories: cats,
+    category: cats[0],
+    // Keep the boolean in sync with the outcome list — one source of truth.
+    escalated_to_cem: (a.escalated_to_cem ?? false) || cats.includes("escalated_to_cem"),
+    lead_sold: (a.lead_sold ?? false) && cats.includes("lead"),
+  };
 }
 
 function safeJson(s: string): unknown {
