@@ -841,6 +841,7 @@ function Dashboard() {
       {selected && (
         <DetailDrawer
           log={selected}
+          role={role}
           onClose={() => setSelectedId(null)}
           onDelete={() => deleteMut.mutate(selected.id)}
           onSave={(patch) => updateMut.mutateAsync({ id: selected.id, patch })}
@@ -1193,18 +1194,20 @@ function LogRow({ log, role, onSelect, onDelete }: { log: Log; role: Role; onSel
 
 function DetailDrawer({
   log,
+  role,
   onClose,
   onDelete,
   onSave,
   saving,
 }: {
   log: Log;
+  role: Role;
   onClose: () => void;
   onDelete: () => void;
   onSave: (patch: Partial<Record<string, unknown>>) => Promise<unknown>;
   saving: boolean;
 }) {
-  return <DetailDrawerInner log={log} onClose={onClose} onDelete={onDelete} onSave={onSave} saving={saving} />;
+  return <DetailDrawerInner log={log} role={role} onClose={onClose} onDelete={onDelete} onSave={onSave} saving={saving} />;
 }
 
 // Multi-outcome picker: one call can carry several outcomes, and the same outcome twice
@@ -1267,12 +1270,14 @@ function OutcomeEditor({
 
 function DetailDrawerInner({
   log,
+  role,
   onClose,
   onDelete,
   onSave,
   saving,
 }: {
   log: Log;
+  role: Role;
   onClose: () => void;
   onDelete: () => void;
   onSave: (patch: Partial<Record<string, unknown>>) => Promise<unknown>;
