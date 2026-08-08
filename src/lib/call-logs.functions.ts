@@ -337,6 +337,9 @@ export const analyzeAndSaveCallLog = createServerFn({ method: "POST" })
         coupon_amount: output.coupon_amount,
         payment_amount: output.payment_amount,
         refund_amount: output.refund_amount,
+        account_label: output.account_label ?? null,
+        escalated_to_cem: output.escalated_to_cem ?? false,
+        lead_sold: output.lead_sold ?? false,
         follow_up_needed: output.follow_up_needed ?? false,
         follow_up_notes: (output.follow_up_needed ?? false) ? output.follow_up_notes : null,
         sentiment: output.sentiment,
@@ -397,6 +400,9 @@ export const bulkImportCallLogs = createServerFn({ method: "POST" })
         coupon_amount: out.coupon_amount,
         payment_amount: out.payment_amount,
         refund_amount: out.refund_amount,
+        account_label: out.account_label ?? null,
+        escalated_to_cem: out.escalated_to_cem ?? false,
+        lead_sold: out.lead_sold ?? false,
         follow_up_needed: out.follow_up_needed ?? false,
         follow_up_notes: (out.follow_up_needed ?? false) ? out.follow_up_notes : null,
         sentiment: out.sentiment,
@@ -451,6 +457,9 @@ const UpdateSchema = z.object({
       coupon_amount: z.number().nullish(),
       payment_amount: z.number().nullish(),
       refund_amount: z.number().nullish(),
+      account_label: z.string().nullish(),
+      escalated_to_cem: z.boolean().optional(),
+      lead_sold: z.boolean().optional(),
       follow_up_needed: z.boolean().optional(),
       follow_up_notes: z.string().nullish(),
       sentiment: z.string().nullish(),
@@ -469,6 +478,11 @@ export const updateCallLog = createServerFn({ method: "POST" })
       patch.category = patch.categories[0];
     } else if (patch.category && !patch.categories) {
       patch.categories = [patch.category];
+    }
+    if (Array.isArray(patch.categories)) {
+      // Keep the escalation flag in sync with the outcome list.
+      patch.escalated_to_cem = patch.categories.includes("escalated_to_cem") || patch.escalated_to_cem === true;
+      if (!patch.categories.includes("lead")) patch.lead_sold = false;
     }
     if (typeof patch.call_date === "string" && patch.call_date) {
       patch.date_source = "user_selected";
@@ -541,6 +555,9 @@ const ManualSchema = z.object({
   coupon_amount: z.number().nullish(),
   payment_amount: z.number().nullish(),
   refund_amount: z.number().nullish(),
+  account_label: z.string().nullish(),
+  escalated_to_cem: z.boolean().default(false),
+  lead_sold: z.boolean().default(false),
   follow_up_needed: z.boolean().default(false),
   follow_up_notes: z.string().nullish(),
   sentiment: z.string().nullish(),
@@ -571,6 +588,9 @@ export const createManualCallLog = createServerFn({ method: "POST" })
         coupon_amount: data.coupon_amount ?? null,
         payment_amount: data.payment_amount ?? null,
         refund_amount: data.refund_amount ?? null,
+        account_label: data.account_label ?? null,
+        escalated_to_cem: data.escalated_to_cem || data.categories.includes("escalated_to_cem"),
+        lead_sold: data.lead_sold && data.categories.includes("lead"),
         follow_up_needed: data.follow_up_needed,
         follow_up_notes: data.follow_up_needed ? data.follow_up_notes ?? null : null,
         sentiment: data.sentiment ?? null,
