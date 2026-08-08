@@ -1,36 +1,55 @@
-# Role onboarding + role-aware dashboard
+# Role definitions, SAVE rules, and commission tracking
 
 ## Goal
-New users pick their role (Customer Experience Specialist / CES or Customer Experience Manager / CEM) once, the choice is saved to their settings, and the dashboard shows only the widgets that matter for that role. The role stays switchable later.
+Teach the app the real CES and CEM job definitions from the company documentation: what each role is allowed to offer without approval, what counts as a SAVE, how outcomes attach to subscriptions, and which outcomes earn commission. Update the onboarding role descriptions, the categories being counted, and the dashboard widgets to match.
 
-## 1. Onboarding step
-- On first load of the dashboard, read the saved role from the user's settings.
-- If no role is saved yet, show a blocking onboarding card (centered, cannot be dismissed) with two large choices:
-  - Customer Experience Specialist
-  - Customer Experience Manager — saves, closes, resigns, leads, cancel-pending follow-ups.
-- Selecting one saves it immediately and drops the user into the dashboard. Existing users with a saved role never see this screen.
-- A small role badge in the dashboard header lets the user switch role at any time (traffic changes roles day to day), saving the new value the same way.
+## 1. Role onboarding descriptions (rewrite)
+Replace the current one-liners on the role picker and the header role switcher with accurate descriptions:
 
-## 2. What each role sees
-Retention widgets are hidden for specialists, and service/billing widgets are de-emphasized for managers.
+- **Customer Experience Specialist (CES)** — Front-line retention. Makes at least 3 GEOC save attempts, negotiates within specialist limits (PP min $124.99, up to 30% off next REG, reschedule up to 2 weeks and within the current month, frequency OR contract length), escalates unsaved accounts as Pending Cancel to a CEM. Commission on payments collected, signed resigns, and leads sent to sales.
+- **Customer Experience Manager (CEM)** — Escalation point for accounts a CES could not save. Broader independent authority (PP min $109.99, up to 50% off or flat $80 off next REG, reschedule any day in the current month, switchover $104.99, ROR free service + $109.99, reactivate closures within 6 months). Commission on everything a CES earns, plus SAVES.
 
-| Surface | Manager (CEM) | Specialist (CES) |
-| --- | --- | --- |
-| KPI cards | Saved, Closed, Resign, Lead, Cancel Pending, Pending Cancel, Reactivation, Inquiry | Reschedule, Re-service, Payment, Payment Promised, Billing Update, Refund, Resign, Inquiry |
-| Money strip | Resign contract value, discount totals | Payments collected, refunds issued, discount totals |
-| Charts | Outcomes trend + category mix limited to retention outcomes; discount $/day; follow-ups | Outcomes trend + category mix limited to service/billing outcomes; payments vs refunds per day; follow-ups |
-| Log table columns | Category, customer, agreement length, price, discount | Category, customer, payments $, refunds $, discount |
-| Category filter chips | Retention-first ordering | Service/billing-first ordering |
-| Daily totals tracker | Retention columns | Service columns incl. Payments/Refunds (already role-aware) |
+Each role card also lists what still needs Team Lead approval, so the app doubles as a quick reference during a call.
 
-Nothing is deleted from the data model: logging, editing outcomes, and the detail drawer keep every category available regardless of role, since one call can carry outcomes from both worlds. Only the analytics surfaces are filtered.
+## 2. Categories: what changes
+Kept as-is: Saved, Closed/Frozen, Resign, Reactivation, Lead, Cancel Pending, Pending Cancel, Reschedule, Re-service, Payment, Payment Promised, Billing Update, Refund, Back on Schedule, Inquiry, Escalation.
 
-## 3. Technical notes
-- No database change needed: `user_settings.role` already exists with a `ces` default, and `getUserSettings` / `setUserRole` server functions are already implemented.
-- Because the column defaults to `ces`, "new user" is detected by the absence of a `user_settings` row (`getUserSettings` returns `role: null`) — that is the onboarding trigger.
-- Dashboard changes in `src/routes/_authenticated/dashboard.tsx`:
-  - Replace the hardcoded `useState<Role>("cem")` with a `useQuery` on `getUserSettings` plus a `useMutation` on `setUserRole` that invalidates the settings query.
-  - Extract a new `RoleOnboarding` component and a `RoleSwitcher` header control.
-  - Add a `CHART_CATEGORIES_BY_ROLE` map alongside the existing `KPI_BY_ROLE`, and drive the category-mix pie, filter chips, and money strip from the active role.
-  - Add a payments-vs-refunds chart rendered only for CES, keeping the discount chart for CEM.
-- Loading state: render the existing skeleton/empty shell while the role query is in flight so the onboarding card does not flash for returning users.
+Changes:
+- **SAVE gets a real definition**: a subscription counts as saved when the customer agrees to at least 2 more services — inferable from context unless the customer says otherwise. If the customer commits to only one more service and then cancels, it is **Cancel Pending**, not a save.
+- **Freeze folds into Closed** for counting purposes: frozen/closed/cancelled are the same retention result, shown as "Closed / Frozen" with the freeze flavor kept on the individual log.
+- **Reactivation** requires the closure to be within 6 months and is manager-authority — flagged if the log shows a longer gap.
+- **Per-subscription outcomes**: one customer can have multiple properties (accounts), and an account can have multiple subscriptions, each with its own outcome. Logs get an optional property/account label so two outcomes on the same call read as "Account A saved, Account B cancel pending" instead of one blurred row.
+- **New tag: Escalated to CEM** — set when a CES flags Pending Cancel after 3 attempts, so the handoff is countable.
+- **Other** stays forbidden.
+
+## 3. Commission tracking (new)
+A commission-eligible outcome list per role drives a new dashboard strip:
+
+| Role | Commissionable |
+| --- | --- |
+| CES | Payment collected, signed Resign, Lead sent to sales (bonus if sold) |
+| CEM | All of the above plus SAVES |
+
+The strip shows counts and dollars for the active role: payments collected, signed resigns, leads sent (and leads sold), and — for CEM only — saves. Non-commissionable outcomes stay visible but in the secondary section.
+
+## 4. Authority / offer-limit awareness
+When a log records a price or discount, the app compares it to the active role's limits and labels the log:
+
+- **Within authority** — inside the role's independent limits.
+- **Needs TL approval** — beyond independent limits but inside Team Lead range (e.g. CES at $109.99, CES 50% off, CEM giving a fully free REG service, rescheduling outside the month, changing frequency AND contract length).
+- **Out of policy** — below any documented floor.
+
+This surfaces as a small badge in the log table and detail drawer, plus a "flagged offers" count so out-of-range entries are easy to review. It is informational, never blocking.
+
+## 5. Role-aware dashboard surfaces
+- **KPI cards** — CEM: Saves, Closed/Frozen, Resigns, Cancel Pending, Pending Cancel, Reactivations, Leads. CES: Reschedules, Re-services, Payments, Payment Promised, Billing Updates, Refunds, Resigns, Leads, Escalated to CEM.
+- **Money strip** — CEM: save value, discount dollars given. CES: payments collected, refunds issued, discount dollars given.
+- **Charts** — outcome trend and category mix limited to the active role's outcome set; discount dollars per day for CEM, payments vs refunds per day for CES.
+- **Log table / daily totals** — columns follow the role, same as the KPI split.
+
+Logging and editing always expose every category and every field regardless of role, since traffic moves the user between roles day to day.
+
+## 6. Technical notes
+- `src/lib/call-logs.functions.ts`: rewrite the role section of `SYSTEM_PROMPT` with both authority tables, the 2-additional-services SAVE rule, GEOC/3-attempt escalation, per-account/per-subscription outcome guidance, and the 6-month reactivation window. Add `account_label`, `escalated_to_cem`, `lead_sold`, and an `authority_flag` derived value to the analysis schema and the heuristic fallback. Fold `freeze` into the closed tally while keeping the tag.
+- Database: one migration adding `account_label text`, `escalated_to_cem boolean default false`, `lead_sold boolean default false` to `call_logs`, plus the `escalated_to_cem` outcome in the categories vocabulary. Authority limits live in code (`src/lib/role-policy.ts`), not the database, so they are easy to tune.
+- `src/routes/_authenticated/dashboard.tsx`: extend `CATEGORY_META` and `KPI_BY_ROLE`, add `COMMISSION_BY_ROLE`, add the commission strip and authority badges, and pull the new role descriptions from `role-policy.ts` for the onboarding card and switcher.
