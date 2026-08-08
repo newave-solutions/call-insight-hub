@@ -1087,7 +1087,7 @@ function EmptyChart() {
 
 type Log = Awaited<ReturnType<typeof listCallLogs>>[number];
 
-function LogRow({ log, onSelect, onDelete }: { log: Log; onSelect: () => void; onDelete: () => void }) {
+function LogRow({ log, role, onSelect, onDelete }: { log: Log; role: Role; onSelect: () => void; onDelete: () => void }) {
   const cats = logCategories(log);
   const details =
     cats.includes("resign")
@@ -1103,6 +1103,9 @@ function LogRow({ log, onSelect, onDelete }: { log: Log; onSelect: () => void; o
     <TableRow onClick={onSelect} className="cursor-pointer text-xs">
       <TableCell className="max-w-[160px] py-2 font-medium">
         <div className="truncate">{log.customer_name || "—"}</div>
+        {log.account_label && (
+          <div className="truncate text-[10px] text-muted-foreground">{log.account_label}</div>
+        )}
       </TableCell>
       <TableCell className="py-2 font-mono text-[11px] text-muted-foreground">
         {log.customer_id || "—"}
@@ -1121,6 +1124,10 @@ function LogRow({ log, onSelect, onDelete }: { log: Log; onSelect: () => void; o
           {cats.length > 1 && (
             <span className="rounded-md bg-primary/10 px-1 py-0.5 text-[9px] font-bold uppercase text-primary">×{cats.length}</span>
           )}
+          {log.lead_sold && (
+            <span className="rounded-md bg-emerald-500/10 px-1 py-0.5 text-[9px] font-bold uppercase text-emerald-700">sold</span>
+          )}
+          <AuthorityBadge role={role} log={log} />
         </div>
       </TableCell>
       <TableCell className="max-w-[280px] py-2 text-muted-foreground">
