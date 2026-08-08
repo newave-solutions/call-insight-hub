@@ -16,6 +16,7 @@ export type Database = {
     Tables: {
       call_logs: {
         Row: {
+          account_label: string | null
           agreement_length_months: number | null
           call_date: string | null
           categories: string[]
@@ -27,10 +28,12 @@ export type Database = {
           customer_id: string | null
           customer_name: string | null
           date_source: string
+          escalated_to_cem: boolean
           follow_up_needed: boolean
           follow_up_notes: string | null
           id: string
           key_points: Json | null
+          lead_sold: boolean
           payment_amount: number | null
           price_per_service: number | null
           raw_notes: string
@@ -42,6 +45,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          account_label?: string | null
           agreement_length_months?: number | null
           call_date?: string | null
           categories?: string[]
@@ -53,10 +57,12 @@ export type Database = {
           customer_id?: string | null
           customer_name?: string | null
           date_source?: string
+          escalated_to_cem?: boolean
           follow_up_needed?: boolean
           follow_up_notes?: string | null
           id?: string
           key_points?: Json | null
+          lead_sold?: boolean
           payment_amount?: number | null
           price_per_service?: number | null
           raw_notes: string
@@ -68,6 +74,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          account_label?: string | null
           agreement_length_months?: number | null
           call_date?: string | null
           categories?: string[]
@@ -79,10 +86,12 @@ export type Database = {
           customer_id?: string | null
           customer_name?: string | null
           date_source?: string
+          escalated_to_cem?: boolean
           follow_up_needed?: boolean
           follow_up_notes?: string | null
           id?: string
           key_points?: Json | null
+          lead_sold?: boolean
           payment_amount?: number | null
           price_per_service?: number | null
           raw_notes?: string
