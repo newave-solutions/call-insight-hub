@@ -86,6 +86,12 @@ import {
   UserCog,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  COMMISSION_CATEGORIES,
+  ROLE_DEFINITIONS,
+  evaluateAuthority,
+  type Role,
+} from "@/lib/role-policy";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -103,16 +109,16 @@ type Category =
   | "saved" | "closed" | "resign" | "reactivation" | "lead"
   | "cancel_pending" | "pending_cancel"
   | "reschedule" | "reservice" | "payment" | "payment_promise" | "billing_update"
-  | "freeze" | "refund" | "back_on_schedule" | "inquiry" | "escalation" | "other";
+  | "freeze" | "refund" | "back_on_schedule" | "inquiry" | "escalation"
+  | "escalated_to_cem" | "other";
 
 const ALL_CATEGORIES: Category[] = [
   "saved", "closed", "resign", "reactivation", "lead",
   "cancel_pending", "pending_cancel",
   "reschedule", "reservice", "payment", "payment_promise", "billing_update",
-  "freeze", "refund", "back_on_schedule", "inquiry", "escalation", "other",
+  "freeze", "refund", "back_on_schedule", "inquiry", "escalation",
+  "escalated_to_cem", "other",
 ];
-
-type Role = "ces" | "cem";
 
 function logCategories(l: { categories?: string[] | null; category: string }): Category[] {
   const arr = Array.isArray(l.categories) && l.categories.length > 0 ? l.categories : [l.category];
@@ -131,7 +137,7 @@ const CATEGORY_META: Record<
   { label: string; icon: typeof Shield; color: string; dot: string; hex: string }
 > = {
   saved: { label: "Saved", icon: Shield, color: "text-emerald-600 bg-emerald-500/10", dot: "bg-emerald-500", hex: "#10b981" },
-  closed: { label: "Closed", icon: Ban, color: "text-rose-600 bg-rose-500/10", dot: "bg-rose-500", hex: "#f43f5e" },
+  closed: { label: "Closed / Frozen", icon: Ban, color: "text-rose-600 bg-rose-500/10", dot: "bg-rose-500", hex: "#f43f5e" },
   resign: { label: "Resign", icon: FileSignature, color: "text-blue-600 bg-blue-500/10", dot: "bg-blue-500", hex: "#3b82f6" },
   reactivation: { label: "Reactivation", icon: RefreshCw, color: "text-cyan-600 bg-cyan-500/10", dot: "bg-cyan-500", hex: "#06b6d4" },
   lead: { label: "Lead", icon: TrendingUp, color: "text-amber-600 bg-amber-500/10", dot: "bg-amber-500", hex: "#f59e0b" },
@@ -147,13 +153,20 @@ const CATEGORY_META: Record<
   payment_promise: { label: "Payment Promised", icon: Wallet, color: "text-lime-700 bg-lime-500/10", dot: "bg-lime-500", hex: "#65a30d" },
   inquiry: { label: "Inquiry / Doubts", icon: MessageSquare, color: "text-violet-600 bg-violet-500/10", dot: "bg-violet-500", hex: "#8b5cf6" },
   escalation: { label: "Escalation", icon: BellRing, color: "text-orange-700 bg-orange-600/10", dot: "bg-orange-600", hex: "#ea580c" },
+  escalated_to_cem: { label: "Escalated to CEM", icon: UserCog, color: "text-purple-700 bg-purple-500/10", dot: "bg-purple-500", hex: "#a855f7" },
   other: { label: "Other", icon: MessageSquare, color: "text-muted-foreground bg-muted", dot: "bg-muted-foreground/60", hex: "#94a3b8" },
 };
 
 // Which category chips get top-of-page KPI cards per role.
 const KPI_BY_ROLE: Record<Role, Category[]> = {
-  cem: ["saved", "closed", "resign", "lead", "cancel_pending", "pending_cancel", "reactivation", "inquiry"],
-  ces: ["reschedule", "reservice", "payment", "billing_update", "refund", "resign", "lead", "inquiry"],
+  cem: ["saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel", "inquiry"],
+  ces: ["reschedule", "reservice", "payment", "payment_promise", "billing_update", "refund", "resign", "escalated_to_cem"],
+};
+
+// Which outcomes drive the trend chart + category mix per role.
+const CHART_CATEGORIES_BY_ROLE: Record<Role, Category[]> = {
+  cem: ["saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel"],
+  ces: ["reschedule", "reservice", "payment", "payment_promise", "billing_update", "refund", "resign", "lead", "inquiry", "escalated_to_cem"],
 };
 
 function Dashboard() {
