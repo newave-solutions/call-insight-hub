@@ -55,9 +55,31 @@ function getModel() {
 
 const SYSTEM_PROMPT = `You read customer service / retention call notes for SAELA PEST CONTROL and extract structured data.
 
-ROLES using this app:
-- CEM (Customer Experience Manager) — retention focus: saves vs closes, resigns, leads, cancel_pending, pending_cancel, coupons.
-- CES (Customer Experience Specialist) — service focus: reschedules, free re-services (no charge), building value, resigns, leads, updating billing information, taking payments on outstanding balances, refunds.
+ROLES using this app (the same person moves between them depending on traffic):
+- CES (Customer Experience Specialist) — front-line retention and service. Must make at least 3 retention
+  attempts using GEOC (Gratitude, Empathy, Ownership, Clarity) before flagging an account as a Pending
+  Cancel and escalating it to a CEM. Independent authority (no Team Lead approval): PP minimum $124.99,
+  up to 30% off the next regular (REG) service, reschedule up to 2 weeks out inside the current month,
+  change service frequency OR contract length, switchover PP $109.99 ($99.99 only to match a competitor),
+  PTI / 3-day ROR PP minimum $114.99. Team Lead approval needed for: PP $109.99 (or $104.97 convenient
+  billing), discounts above 30% up to 50%, rescheduling to any other day of the current month, changing
+  frequency AND contract length together.
+- CEM (Customer Experience Manager) — higher-level escalation point for accounts a CES could not save.
+  Independent authority: PP minimum $109.99, up to 50% off OR a flat $80 discount on the next REG service,
+  reschedule to any day in the current month, change frequency OR contract length, switchover PP $104.99
+  ($80 discount only when matching a competitor), 3-day ROR PP $109.99 plus a free service, and
+  reactivation of a subscription closed/frozen within the last 6 months. Team Lead approval needed for:
+  a completely free next REG service, rescheduling outside the current month, changing frequency AND
+  contract length together.
+Commissions: CES earns on payments collected, signed resigns, and leads sent to sales (bonus if sold).
+CEM earns all of those PLUS saves.
+
+ACCOUNTS AND SUBSCRIPTIONS:
+One customer may own multiple properties, and each property is its own account. One account may carry
+multiple subscriptions, and each subscription has its own outcome. When the notes clearly describe more
+than one property/account, set account_label to a short identifier for the one the outcomes belong to
+(e.g. "Main St", "rental property", "account 2"); otherwise leave it null. Return one outcome entry per
+subscription result.
 CRITICAL: EVERY call gets at least one real outcome. NEVER return "other". If nothing else fits,
 the call is an "inquiry" (customer had questions / doubts / wanted clarification). Pick EVERY
 applicable outcome from the list below — multiple outcomes per call are normal and expected.
@@ -100,11 +122,18 @@ Example note line: "1585346 PPEOM / Patrick Blue / Dallas / RS scheduled for 07/
  -> customer_id "1585346", customer_name "Patrick Blue", service_name "Protection Program Every Other Month", branch mention "Dallas", RS scheduled for 07/03.
 
 Categories — pick every outcome that applies (the same call can have several):
-- "saved": customer wanted to cancel but was retained.
-- "closed": account/subscription was closed or canceled.
+- "saved": the subscription was retained — the customer agreed to continue for AT LEAST 2 more services.
+  This can be IMPLIED from the conversation (they accepted an offer and kept the plan) unless the customer
+  explicitly said otherwise. If the customer only agreed to ONE more service and then wants to stop, that
+  is "cancel_pending", NOT a save.
+- "closed": account/subscription was closed, cancelled, or frozen (same retention result).
 - "resign": customer signed a new agreement or renewed with new terms.
-- "reactivation": a previously closed/cancelled account was reactivated / restarted.
+  Only counts for commission when the agreement was actually signed.
+- "reactivation": a previously closed/frozen/cancelled subscription was reopened. Manager authority, and
+  only allowed within 6 months of the day it was closed/frozen. If the notes show a longer gap, still use
+  "reactivation" and mention the gap in the summary.
 - "lead": call was sent to Inside Sales for new subscription, upsell, or new service.
+  Set lead_sold = true only if the notes say the lead actually sold.
 - "cancel_pending": the customer said on THIS call that they'll take the next service and then cancel — cancellation is scheduled/pending after the next visit.
 - "pending_cancel": the account was flagged as pending cancel on the retention doc BEFORE this call, and the agent is following up to offer options. If the notes mention "from the doc", "the doc", "retention doc", or list the customer as an existing pending cancel, use this — NOT cancel_pending.
 - "reschedule": a service was rescheduled or scheduled (new appointment date).
@@ -117,6 +146,9 @@ Categories — pick every outcome that applies (the same call can have several):
 - "back_on_schedule": customer was on "the doc" and could not be reached after 3 attempts, so they were placed back on regular schedule. Notes may say "transferred from the doc", "back on schedule", "put back on schedule".
 - "inquiry": customer had doubts/questions, wanted clarification, general info, a complaint, or product/value education — nothing else changed on the account. Use this instead of "other".
 - "escalation": call was escalated / transferred to a branch, field manager, or another department.
+- "escalated_to_cem": the agent made their retention attempts (3+ GEOC attempts), could not save the
+  subscription, flagged it as a pending cancel, and handed it to a Customer Experience Manager. Include
+  "cancel_pending" or "pending_cancel" alongside it when that applies, and set escalated_to_cem = true.
 - "other": FORBIDDEN. Never return this value.
 
 MULTI-OUTCOME CALLS (CRITICAL — do not skip):
