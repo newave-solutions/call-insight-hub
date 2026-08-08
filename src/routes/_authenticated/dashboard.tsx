@@ -438,6 +438,14 @@ function Dashboard() {
     analyzeMut.mutate({ notes: trimmed, callDate: callDate.toISOString() });
   }
 
+  // Returning users never see the onboarding card; hold the shell until the role resolves.
+  if (settingsQuery.isPending) {
+    return <div className="min-h-screen bg-background" />;
+  }
+  if (needsOnboarding) {
+    return <RoleOnboarding onPick={(r) => roleMut.mutate(r)} saving={roleMut.isPending} />;
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur">
