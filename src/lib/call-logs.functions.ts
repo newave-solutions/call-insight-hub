@@ -218,7 +218,7 @@ async function runExtraction(notes: string): Promise<Analysis> {
   try {
     const model = getModel();
     const res = await generateObject({ model, schema: AnalysisSchema, system: SYSTEM_PROMPT, prompt: `Call notes:\n\n${notes}` });
-    return normalize(res.object);
+    return normalize(mergeHeuristics(res.object, notes));
   } catch (err) {
     if (NoObjectGeneratedError.isInstance(err)) {
       const raw = (err as { text?: string }).text ?? "";
@@ -226,12 +226,38 @@ async function runExtraction(notes: string): Promise<Analysis> {
       const parsed = match ? safeJson(match[0]) : null;
       if (parsed) {
         const lenient = AnalysisSchema.safeParse(parsed);
-        if (lenient.success) return normalize(lenient.data);
+        if (lenient.success) return normalize(mergeHeuristics(lenient.data, notes));
       }
     }
     // Never lose a call: fall back to a heuristic read of the notes.
     return normalize(heuristicExtract(notes));
   }
+}
+
+// When the model answered, still let the deterministic parser add outcomes it clearly missed,
+// and fall back entirely when the model produced nothing usable.
+function mergeHeuristics(a: Analysis, notes: string): Analysis {
+  const modelCats = (Array.isArray(a.categories) && a.categories.length > 0 ? a.categories : [a.category])
+    .filter((c): c is Analysis["category"] => Boolean(c) && c !== "other");
+  const { cats: keywordCats } = keywordCategories(notes);
+
+  if (modelCats.length === 0) {
+    const fallback = heuristicExtract(notes);
+    return { ...a, categories: fallback.categories, category: fallback.category, needs_review: fallback.needs_review };
+  }
+
+  const merged = [...modelCats];
+  for (const c of keywordCats) {
+    // "inquiry" is the catch-all; never add it on top of a real outcome.
+    if (c !== "inquiry" && !merged.includes(c)) merged.push(c);
+  }
+  const real = merged.filter((c) => c !== "inquiry");
+  return {
+    ...a,
+    categories: real.length > 0 ? real : merged,
+    category: (real.length > 0 ? real : merged)[0],
+    needs_review: real.length === 0 && keywordCats.length === 0,
+  };
 }
 
 // Last-resort local parser so a call ALWAYS gets logged even if the model is unavailable.
