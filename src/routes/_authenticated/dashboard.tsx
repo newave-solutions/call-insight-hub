@@ -1494,6 +1494,7 @@ function DetailDrawerInner({
 
   async function save() {
     const cats = form.categories.length > 0 ? form.categories : [form.category as Category];
+    // eslint-disable-next-line no-empty
     const patch: Record<string, unknown> = {
       customer_name: form.customer_name.trim() || null,
       customer_id: form.customer_id.trim() || null,
