@@ -117,7 +117,7 @@ const ALL_CATEGORIES: Category[] = [
   "saved", "closed", "resign", "reactivation", "lead",
   "cancel_pending", "pending_cancel",
   "reschedule", "reservice", "payment", "payment_promise", "billing_update",
-  "freeze", "refund", "back_on_schedule", "inquiry", "escalation",
+  "refund", "back_on_schedule", "inquiry", "escalation",
   "escalated_to_cem", "other",
 ];
 
@@ -338,8 +338,6 @@ function Dashboard() {
       const lcats = logCategories(l);
       for (const c of lcats) {
         t[c] += 1;
-        // A frozen subscription is the same retention result as a close.
-        if (c === "freeze") t.closed += 1;
       }
       if (l.lead_sold) t.leadsSold += 1;
       if (l.escalated_to_cem) t.escalatedToCem += 1;
