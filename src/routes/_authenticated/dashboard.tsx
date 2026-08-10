@@ -1567,6 +1567,30 @@ function DetailDrawerInner({
           </div>
         </div>
 
+        {log.needs_review && !editing && (
+          <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>This call couldn't be categorized automatically. Confirm its outcomes below.</span>
+          </div>
+        )}
+
+        {!editing && (
+          <div className="mt-4 rounded-lg border p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Outcomes</h3>
+              {outcomesDirty && (
+                <Button size="sm" className="h-7 text-xs" disabled={saving || form.categories.length === 0} onClick={saveOutcomes}>
+                  {saving ? "Saving…" : "Save outcomes"}
+                </Button>
+              )}
+            </div>
+            <OutcomeEditor value={form.categories} onChange={(next) => set("categories", next)} />
+            <p className="mt-2 text-[10px] text-muted-foreground">
+              Add every outcome that happened — use + to count the same outcome twice (e.g. two subscriptions closed).
+            </p>
+          </div>
+        )}
+
         {editing ? (
           <div className="mt-6 space-y-4">
             <div className="grid grid-cols-2 gap-3">
