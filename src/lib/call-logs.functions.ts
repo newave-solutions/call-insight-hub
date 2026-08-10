@@ -335,9 +335,15 @@ function normalize(a: Analysis): Analysis {
   const raw = Array.isArray(a.categories) && a.categories.length > 0 ? a.categories : [a.category];
   // "other" is never allowed — an unclassified call is an inquiry.
   // A frozen account is the same retention result as a close.
-  const mapped = raw.map((c) => (c === "other" ? "inquiry" : c === "freeze" ? "closed" : c)) as Analysis["category"][];
-  const deduped = mapped.filter((c, i) => c !== "closed" || mapped.indexOf(c) === i || mapped[i] !== "closed" || i === mapped.indexOf("closed"));
-  const cats = deduped.length > 0 ? deduped : (["inquiry"] as Analysis["category"][]);
+  const hadClosed = raw.includes("closed");
+  const mapped: Analysis["category"][] = [];
+  for (const c of raw) {
+    if (c === "other") { if (!mapped.includes("inquiry")) mapped.push("inquiry"); continue; }
+    // Frozen folds into closed; don't double-count when the list already had a close.
+    if (c === "freeze") { if (!hadClosed) mapped.push("closed"); continue; }
+    mapped.push(c);
+  }
+  const cats = mapped.length > 0 ? mapped : (["inquiry"] as Analysis["category"][]);
   return {
     ...a,
     categories: cats,
