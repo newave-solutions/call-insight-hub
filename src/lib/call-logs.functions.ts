@@ -271,11 +271,27 @@ const SERVICE_MAP: [RegExp, string][] = [
   [/\bpp\b/i, "Protection Program"],
 ];
 
+// Wording that means an outcome was only OFFERED, declined, or left for the future —
+// never a completed outcome. A keyword sitting in such a clause must not become a tag.
+const OFFERED_OR_FUTURE =
+  /\b(offer(s|ed|ing)?|quote[ds]?|quoting|propos(e|ed|al)|present(ed)?|mention(ed)?|explain(ed)?|advis(e|ed)|inform(ed)?|let (them|him|her) know|told (them|him|her)|option(s)? to|eligible to|able to|can|could|may|might|if (they|he|she|the cx)|should (they|he|she)|whenever|any ?time|in the future|within (the )?(next )?\d+\s*(day|week|month)|next (\d+\s*)?months?|will (call|reach|pay|think|let|get back)|going to (call|think|pay)|plans? to|thinking (about|it over)|consider(ing)?|declin(e|ed|es)|refus(e|ed|es)|reject(ed)?|not interested|no interest|said no|would ?n[o']?t|did ?n[o']?t (accept|agree|sign|want|take)|does ?n[o']?t want|turned (it )?down|pending (signature|approval)|waiting (on|for) (the )?(signature|signed|approval|callback)|unsigned|not (yet )?signed|no answer|left (a )?(voicemail|vm|message)|nva\b|no voice ?mail)/i;
+
+// Split notes into clauses so an "offered X" phrase can't taint a nearby completed outcome.
+function clauses(notes: string): string[] {
+  return notes
+    .split(/(?:[.!?;\n]|,\s*(?=but\b|however\b|so\b)|\bbut\b|\bhowever\b)+/i)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
 // Deterministic keyword classifier — the safety net that guarantees a call is never lost.
-// Returns the outcomes it could prove from explicit words, plus whether anything matched at all.
+// Only outcomes that actually HAPPENED on the call are returned.
 function keywordCategories(notes: string): { cats: Analysis["category"][]; matched: boolean } {
   const cats: Analysis["category"][] = [];
+  const parts = clauses(notes);
   const has = (re: RegExp) => re.test(notes);
+  // True only when the keyword appears in a clause that is not an offer / refusal / future plan.
+  const did = (re: RegExp) => parts.some((p) => re.test(p) && !OFFERED_OR_FUTURE.test(p));
   const add = (c: Analysis["category"]) => {
     if (!cats.includes(c)) cats.push(c);
   };
@@ -287,22 +303,27 @@ function keywordCategories(notes: string): { cats: Analysis["category"][]; match
   if (pendingCancel) add("pending_cancel");
 
   // A negated cancellation is a save, not a close.
-  const keptService = has(/\bnot\s+cancel\w*|\bdid\s?n[o']?t\s+cancel|\bkept\s+(the\s+)?(service|plan|account)|\bdecided to (stay|keep|continue)|\bwill (stay|continue|keep)\b/i);
-  if (keptService || has(/\bsaved?\b|\bsave[sd]?\b|\bretain(ed|ing)?\b|\bretention save\b/i)) add("saved");
+  const keptService = has(/\bnot\s+cancel\w*|\bdid\s?n[o']?t\s+cancel|\bkept\s+(the\s+)?(service|plan|account)|\bdecided to (stay|keep|continue)|\bagreed to (stay|keep|continue|\d+ more)/i);
+  if (keptService || did(/\bsaved?\b|\bsave[sd]\b|\bretain(ed|ing)\b|\bretention save\b/i)) add("saved");
 
-  if (has(/\bre-?sign(ed|ing|s)?\b|\bnew agreement\b|\brenew(ed|al)?\b|reduc\w*\s+(price\s+)?to\b|\bprice reduction\b/i)) add("resign");
-  if (has(/\blead\b|\bleads\b|inside sales|\bsent to sales\b|\bIS\s+lead\b/i)) add("lead");
-  if (has(/\breactivat/i)) add("reactivation");
+  // Resign only counts when the agreement was actually signed / accepted on the call.
+  const resignSubject = did(/\bre-?sign(ed|ing|s)?\b|\bnew agreement\b|\brenew(ed|al)?\b|reduc\w*\s+(price\s+)?to\b|\bprice reduction\b/i);
+  const signedProof = did(/\bsigned\b|\bre-?signed\b|\be-?sign(ed|ature)? (complete|done|received|back)\b|\bagreement (was )?signed\b|\baccepted (the )?(new )?agreement\b|\bsigned (the )?(new )?agreement\b|\bresign(ed)? (at|for)\b/i);
+  if (resignSubject && signedProof) add("resign");
+
+  if (did(/\blead\b|\bleads\b|inside sales|\bsent to sales\b|\bIS\s+lead\b/i)) add("lead");
+  // Reactivation counts only when the subscription was reopened on THIS call — not when the
+  // customer was merely told they can reactivate later.
+  if (did(/\breactivat(ed|ing|ion)\b/i) && !/\breactivat\w*/i.test(notes.match(new RegExp(`[^.!?\\n]*\\breactivat\\w*[^.!?\\n]*`, "i"))?.[0]?.match(OFFERED_OR_FUTURE) ? "reactivate" : "")) add("reactivation");
   // Frozen is the same retention result as a close.
-  if (has(/\bfreez\w*|\bfrozen\b|\bseasonal (hold|pause)\b|\bpaused\b/i)) add("closed");
-  if (!keptService && has(/\bclos(e|ed|ing|ure)\b|\bcancell?(ed|ation)\b|\bterminated\b/i) && !cancelPending && !pendingCancel) add("closed");
-  if (has(/\bre-?schedul\w*|\bpush(ed)? (the )?(service|appointment|appt)\b|\bmov(e|ed) (the )?(service|appointment|appt)\b/i)) add("reschedule");
-  if (has(/\bre-?service\b|\bre-?svc\b|\bRS\b/)) add("reservice");
-  if (has(/\brefund\w*/i)) add("refund");
-  if (has(/\bpayment promise\w*|\bpromised to pay\b|\bwill (call back|pay) (to pay|later|tomorrow|on)\b|\bpay later\b/i)) add("payment_promise");
-  if (has(/\bpayment\b|\bpaid\b|\bcard ran\b|\bran (the )?card\b|\bcollected\b|\bbalance (paid|cleared)\b|\btook (a )?payment\b/i)) add("payment");
+  if (did(/\bfroze\b|\bfroze[n]?\b|\bfreez(e|ing)\b|\bseasonal (hold|pause)\b|\bpaused\b/i)) add("closed");
+  if (!keptService && did(/\bclos(e|ed|ing|ure)\b|\bcancell?(ed|ation)\b|\bterminated\b/i) && !cancelPending && !pendingCancel) add("closed");
+  if (did(/\bre-?schedul(e|ed|ing)\b|\bpush(ed)? (the )?(service|appointment|appt)\b|\bmov(e|ed) (the )?(service|appointment|appt)\b/i)) add("reschedule");
+  if (did(/\bre-?service\b|\bre-?svc\b|\bRS\b/)) add("reservice");
+  if (did(/\brefund(ed|s)?\b/i)) add("refund");
+  if (did(/\bpayment\b|\bpaid\b|\bcard ran\b|\bran (the )?card\b|\bcollected\b|\bbalance (paid|cleared)\b|\btook (a )?payment\b/i)) add("payment");
   if (has(/back on schedule|put back on (the )?schedule|transferred from the doc/i)) add("back_on_schedule");
-  if (has(/\bbilling (info|information|update|address)\b|\bupdated (the )?card\b|\bnew card\b|\bautopay\b|\bcard on file\b/i)) add("billing_update");
+  if (did(/\bbilling (info|information|update|address)\b|\bupdated (the )?card\b|\bnew card\b|\bautopay\b|\bcard on file\b/i)) add("billing_update");
   if (has(/escalat\w*\s+to\s+(a\s+)?(cem|manager|retention manager)|\bto cem\b|\bhanded (it |the account )?to (a )?cem\b/i)) add("escalated_to_cem");
   if (has(/\bescalat\w*|transferred to (the )?(branch|fm|bm|field manager|branch manager)/i)) add("escalation");
   if (has(/\binquir\w*|\bquestion\w*|\bdoubts?\b|\bclarif\w*|\basked about\b|\bcomplain\w*/i)) add("inquiry");
