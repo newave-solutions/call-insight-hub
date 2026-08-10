@@ -143,7 +143,8 @@ Categories — pick every outcome that applies (the same call can have several):
 - "payment": a payment / outstanding balance was taken on the call. Populate payment_amount with the dollar amount collected (numeric).
 - "payment_promise": the customer did not pay on the call but committed to call back / pay later.
 - "billing_update": billing information (card, address, autopay) was updated. If a payment was ALSO taken, include BOTH "billing_update" and "payment".
-- "freeze": account was frozen / paused (e.g. seasonal freeze). A FROZEN account counts the same as a close for retention purposes — use "freeze" (do not also add "closed").
+- FROZEN / PAUSED accounts: a frozen, paused, or seasonal-hold account is the SAME retention result as a
+  close. Return "closed" for it (never "freeze") and mention the freeze in the summary.
 - "refund": a refund was issued to the customer. Populate refund_amount with the refunded dollar amount (numeric).
 - "back_on_schedule": customer was on "the doc" and could not be reached after 3 attempts, so they were placed back on regular schedule. Notes may say "transferred from the doc", "back on schedule", "put back on schedule".
 - "inquiry": customer had doubts/questions, wanted clarification, general info, a complaint, or product/value education — nothing else changed on the account. Use this instead of "other".
@@ -164,7 +165,7 @@ Return every outcome in the "categories" array, in the order they occurred. Also
 - Save + lead sent to Inside Sales for additional service -> categories: ["saved","lead"].
 - Billing card updated + payment of $185 taken on outstanding balance -> categories: ["billing_update","payment"], payment_amount: 185.
 - Reschedule + free re-service scheduled -> categories: ["reschedule","reservice"].
-- Pending cancel from the doc, agent offered freeze -> categories: ["pending_cancel","freeze"].
+- Pending cancel from the doc, agent froze the account -> categories: ["pending_cancel","closed"] (frozen = closed).
 - Customer refunded $60 and rescheduled -> categories: ["refund","reschedule"], refund_amount: 60.
 If only one outcome occurred, return a single-element array.
 
