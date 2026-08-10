@@ -314,9 +314,23 @@ function clauses(notes: string): string[] {
 function keywordCategories(notes: string): { cats: Analysis["category"][]; matched: boolean } {
   const cats: Analysis["category"][] = [];
   const parts = clauses(notes);
+// Refusal wording. A refusal kills the OFFERED thing, but the cancellation that follows it
+// ("offered 50% off, customer declined and cancelled") really did happen.
+const REFUSED =
+  /\b(declin(e|ed|es)|refus(e|ed|es)|reject(ed)?|not interested|no interest|said no|would ?n[o']?t|turned (it )?down|did ?n[o']?t (accept|agree|want|take))\b/i;
+
   const has = (re: RegExp) => re.test(notes);
   // True only when the keyword appears in a clause that is not an offer / refusal / future plan.
   const did = (re: RegExp) => parts.some((p) => re.test(p) && !OFFERED_OR_FUTURE.test(p));
+  // Same, but a refusal in the clause is allowed — used for the losing outcomes.
+  const didAfterRefusal = (re: RegExp) =>
+    parts.some((p) => {
+      if (!re.test(p)) return false;
+      if (!OFFERED_OR_FUTURE.test(p)) return true;
+      // Strip the refusal words and re-check: if the only "offer/future" signal was the refusal
+      // itself, the outcome still happened.
+      return REFUSED.test(p) && !OFFERED_OR_FUTURE.test(p.replace(new RegExp(REFUSED.source, "gi"), " "));
+    });
   const add = (c: Analysis["category"]) => {
     if (!cats.includes(c)) cats.push(c);
   };
