@@ -82,6 +82,24 @@ multiple subscriptions, and each subscription has its own outcome. When the note
 than one property/account, set account_label to a short identifier for the one the outcomes belong to
 (e.g. "Main St", "rental property", "account 2"); otherwise leave it null. Return one outcome entry per
 subscription result.
+COMPLETED vs OFFERED / DECLINED / FUTURE (READ THIS FIRST — most common mistake):
+An outcome is tagged ONLY when the notes show it actually HAPPENED ON THIS CALL. Something that was
+merely offered, quoted, discussed, presented as an option, declined by the customer, or left for the
+future is NOT an outcome. Wording like "offered", "quoted", "presented", "discussed", "let them know
+they can…", "they have the option to…", "if they call back", "within the next X months", "will call
+back", "will pay later", "thinking about it", "declined", "refused", "not interested", "said no",
+"did not accept/agree/sign", "sent for signature / waiting on signature" NEVER produces that tag.
+In those cases record what actually happened instead — usually the real retention result
+("cancel_pending", "pending_cancel", "closed") or "inquiry" if nothing changed on the account.
+Concrete rules:
+- "Offered 50% off, customer declined and cancelled" -> ["closed"] (no coupon applied, no save).
+- "Told the customer they can call back within 6 months to reactivate" -> NOT a reactivation. That is
+  a future option only. Tag the real result of the call (e.g. "closed" or "inquiry").
+- "Sent the agreement, waiting on signature" -> NOT a resign. Set follow_up_needed = true instead.
+- "Customer will pay next week" -> NOT a payment. It is an "inquiry" plus a follow-up note.
+- A discount that was quoted but not applied -> leave coupon fields null.
+When you are unsure whether something was completed, do NOT tag it — set needs_review = true.
+
 CRITICAL: EVERY call gets at least one real outcome. NEVER return "other". If nothing else fits,
 the call is an "inquiry" (customer had questions / doubts / wanted clarification). Pick EVERY
 applicable outcome from the list below — multiple outcomes per call are normal and expected.
@@ -129,10 +147,14 @@ Categories — pick every outcome that applies (the same call can have several):
   explicitly said otherwise. If the customer only agreed to ONE more service and then wants to stop, that
   is "cancel_pending", NOT a save.
 - "closed": account/subscription was closed, cancelled, or frozen (same retention result).
-- "resign": customer signed a new agreement or renewed with new terms.
-  Only counts for commission when the agreement was actually signed.
-- "reactivation": a previously closed/frozen/cancelled subscription was reopened. Manager authority, and
-  only allowed within 6 months of the day it was closed/frozen. If the notes show a longer gap, still use
+- "resign": the customer SIGNED a new agreement (or accepted new terms that were signed) on this call.
+  Proof required: "signed", "agreement signed", "e-sign completed", "resigned at $X", "accepted and
+  signed the new agreement". An agreement that was only sent, offered, quoted, or is awaiting a
+  signature is NOT a resign — leave the tag off and set follow_up_needed = true.
+- "reactivation": a previously closed/frozen/cancelled subscription was REOPENED ON THIS CALL. Manager
+  authority, and only allowed within 6 months of the day it was closed/frozen. Telling a customer they
+  may reactivate later (e.g. "you can call back within 6 months and reactivate") is a future option, NOT
+  a reactivation — never tag it. If a real reactivation happened outside the 6-month window, still use
   "reactivation" and mention the gap in the summary.
 - "lead": call was sent to Inside Sales for new subscription, upsell, or new service.
   Set lead_sold = true only if the notes say the lead actually sold.
@@ -140,8 +162,10 @@ Categories — pick every outcome that applies (the same call can have several):
 - "pending_cancel": the account was flagged as pending cancel on the retention doc BEFORE this call, and the agent is following up to offer options. If the notes mention "from the doc", "the doc", "retention doc", or list the customer as an existing pending cancel, use this — NOT cancel_pending.
 - "reschedule": a service was rescheduled or scheduled (new appointment date).
 - "reservice": a free re-service was scheduled between regular services (no charge to customer).
-- "payment": a payment / outstanding balance was taken on the call. Populate payment_amount with the dollar amount collected (numeric).
-- "payment_promise": the customer did not pay on the call but committed to call back / pay later.
+- "payment": a payment / outstanding balance was actually TAKEN on the call (card ran, balance cleared).
+  Populate payment_amount with the dollar amount collected (numeric). A promise to pay later is NOT a
+  payment: leave the tag off, use "inquiry", and set follow_up_needed = true with a short note.
+- "payment_promise": FORBIDDEN. Never return this value (see the payment rule above).
 - "billing_update": billing information (card, address, autopay) was updated. If a payment was ALSO taken, include BOTH "billing_update" and "payment".
 - FROZEN / PAUSED accounts: a frozen, paused, or seasonal-hold account is the SAME retention result as a
   close. Return "closed" for it (never "freeze") and mention the freeze in the summary.
@@ -164,6 +188,7 @@ Return every outcome in the "categories" array, in the order they occurred. Also
 - Agent saves the customer AND signs a new agreement on the same call. -> categories: ["saved","resign"], category: "resign" (resign leads if it happened; otherwise "saved"). Both count for commission.
 - Save + lead sent to Inside Sales for additional service -> categories: ["saved","lead"].
 - Billing card updated + payment of $185 taken on outstanding balance -> categories: ["billing_update","payment"], payment_amount: 185.
+- Offered a resign at $119, customer wants to think about it -> categories: ["inquiry"], no resign tag, follow_up_needed: true.
 - Reschedule + free re-service scheduled -> categories: ["reschedule","reservice"].
 - Pending cancel from the doc, agent froze the account -> categories: ["pending_cancel","closed"] (frozen = closed).
 - Customer refunded $60 and rescheduled -> categories: ["refund","reschedule"], refund_amount: 60.
