@@ -43,6 +43,8 @@ const AnalysisSchema = z.object({
   key_points: z.array(z.string()).nullish().default([]),
   // ISO date string YYYY-MM-DD if the notes clearly mention when the call happened
   detected_date: z.string().nullish().default(null),
+  // True when neither the model nor the keyword parser could confidently classify the call.
+  needs_review: z.boolean().nullish().default(false),
 });
 
 type Analysis = z.infer<typeof AnalysisSchema>;
