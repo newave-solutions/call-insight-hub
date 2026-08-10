@@ -413,6 +413,30 @@ function Dashboard() {
     return days;
   }, [logs]);
 
+  // Total calls logged per day over the last 30 days (zero-filled).
+  const monthSeries = useMemo(() => {
+    const days: { day: string; date: string; calls: number }[] = [];
+    const map = new Map<string, (typeof days)[number]>();
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - i);
+      const key = toDayKey(d);
+      const entry = {
+        day: d.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+        date: key,
+        calls: 0,
+      };
+      days.push(entry);
+      map.set(key, entry);
+    }
+    for (const l of logs) {
+      const e = map.get(toDayKey(new Date(l.call_date ?? l.created_at)));
+      if (e) e.calls += 1;
+    }
+    return days;
+  }, [logs]);
+
   // Per-day tally across ALL history — for the Daily Totals tracker.
   const dailyTotals = useMemo(() => {
     type Row = {
