@@ -408,10 +408,69 @@ export const analyzeAndSaveCallLog = createServerFn({ method: "POST" })
         key_points: output.key_points,
         call_date,
         date_source,
+        needs_review: output.needs_review ?? false,
       })
       .select()
       .single();
 
+    if (error) throw new Error(error.message);
+    return row;
+  });
+
+// Analyze only — no write. The UI can confirm ambiguous outcomes before anything is saved.
+export const analyzeCallNotes = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({ notes: z.string().min(3) }).parse(input))
+  .handler(async ({ data }) => {
+    const output = await runExtraction(data.notes);
+    return output;
+  });
+
+// Persist a draft produced by analyzeCallNotes (optionally with user-corrected outcomes).
+export const saveDraftCallLog = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z.object({
+      notes: z.string().min(3),
+      callDate: z.string().nullish(),
+      draft: AnalysisSchema,
+    }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const output = normalize(data.draft);
+    const { call_date, date_source } = resolveDate(data.callDate ?? null, output.detected_date ?? null);
+    const cats = output.categories ?? [output.category];
+    const { data: row, error } = await context.supabase
+      .from("call_logs")
+      .insert({
+        user_id: context.userId,
+        raw_notes: data.notes,
+        category: cats[0],
+        categories: cats,
+        customer_name: output.customer_name,
+        customer_id: output.customer_id,
+        summary: output.summary,
+        agreement_length_months: output.agreement_length_months,
+        price_per_service: output.price_per_service,
+        service_name: output.service_name,
+        coupon: output.coupon,
+        coupon_value: output.coupon_value,
+        coupon_amount: output.coupon_amount,
+        payment_amount: output.payment_amount,
+        refund_amount: output.refund_amount,
+        account_label: output.account_label ?? null,
+        escalated_to_cem: output.escalated_to_cem ?? false,
+        lead_sold: output.lead_sold ?? false,
+        follow_up_needed: output.follow_up_needed ?? false,
+        follow_up_notes: (output.follow_up_needed ?? false) ? output.follow_up_notes : null,
+        sentiment: output.sentiment,
+        key_points: output.key_points,
+        call_date,
+        date_source,
+        needs_review: output.needs_review ?? false,
+      })
+      .select()
+      .single();
     if (error) throw new Error(error.message);
     return row;
   });
@@ -471,6 +530,7 @@ export const bulkImportCallLogs = createServerFn({ method: "POST" })
         key_points: out.key_points,
         call_date,
         date_source,
+        needs_review: out.needs_review ?? false,
       };
     });
 
@@ -526,6 +586,7 @@ const UpdateSchema = z.object({
       follow_up_notes: z.string().nullish(),
       sentiment: z.string().nullish(),
       call_date: z.string().nullish(),
+      needs_review: z.boolean().optional(),
     })
     .partial(),
 });
