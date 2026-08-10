@@ -44,6 +44,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
   Line,
   LineChart,
   Pie,
@@ -412,6 +413,30 @@ function Dashboard() {
     return days;
   }, [logs]);
 
+  // Total calls logged per day over the last 30 days (zero-filled).
+  const monthSeries = useMemo(() => {
+    const days: { day: string; date: string; calls: number }[] = [];
+    const map = new Map<string, (typeof days)[number]>();
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - i);
+      const key = toDayKey(d);
+      const entry = {
+        day: d.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+        date: key,
+        calls: 0,
+      };
+      days.push(entry);
+      map.set(key, entry);
+    }
+    for (const l of logs) {
+      const e = map.get(toDayKey(new Date(l.call_date ?? l.created_at)));
+      if (e) e.calls += 1;
+    }
+    return days;
+  }, [logs]);
+
   // Per-day tally across ALL history — for the Daily Totals tracker.
   const dailyTotals = useMemo(() => {
     type Row = {
@@ -640,10 +665,10 @@ function Dashboard() {
             </p>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-2 sm:grid-cols-2">
             {role === "cem" ? (
               <ChartCard title="Retention outcomes (14d)">
-                <ResponsiveContainer width="100%" height={140}>
+                <ResponsiveContainer width="100%" height={120}>
                   <BarChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
                     <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
@@ -658,7 +683,7 @@ function Dashboard() {
               </ChartCard>
             ) : (
               <ChartCard title="Payments vs refunds $ / day (14d)">
-                <ResponsiveContainer width="100%" height={140}>
+                <ResponsiveContainer width="100%" height={120}>
                   <BarChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
                     <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
@@ -677,9 +702,9 @@ function Dashboard() {
                 <EmptyChart />
               ) : (
                 <>
-                  <ResponsiveContainer width="100%" height={140}>
+                  <ResponsiveContainer width="100%" height={120}>
                     <PieChart>
-                      <Pie data={categoryPie} dataKey="value" innerRadius={34} outerRadius={58} paddingAngle={2} stroke="none">
+                      <Pie data={categoryPie} dataKey="value" innerRadius={28} outerRadius={50} paddingAngle={2} stroke="none">
                         {categoryPie.map((d) => (
                           <Cell key={d.key} fill={d.fill} />
                         ))}
@@ -693,7 +718,7 @@ function Dashboard() {
             </ChartCard>
 
             <ChartCard title="Discount $ / day (14d)">
-              <ResponsiveContainer width="100%" height={140}>
+              <ResponsiveContainer width="100%" height={120}>
                 <LineChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
                   <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
@@ -709,7 +734,7 @@ function Dashboard() {
             </ChartCard>
 
             <ChartCard title="Follow-ups">
-              <div className="flex h-[140px] flex-col items-center justify-center gap-1">
+              <div className="flex h-[120px] flex-col items-center justify-center gap-1">
                 <BellRing className="h-5 w-5 text-amber-500" />
                 <div className="text-3xl font-semibold tabular-nums">{stats.followUps}</div>
                 <div className="text-[11px] text-muted-foreground">calls need follow-up</div>
@@ -718,8 +743,45 @@ function Dashboard() {
           </div>
         </section>
 
+        {/* Monthly call volume */}
+        <section className="mt-3">
+          <ChartCard title="Calls logged per day (last 30 days)">
+            <ResponsiveContainer width="100%" height={150}>
+              <ComposedChart data={monthSeries} margin={{ top: 5, right: 8, left: -24, bottom: 0 }}>
+                <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={3} />
+                <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
+                <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v: number) => [v, "Calls"]} />
+                <Bar
+                  dataKey="calls"
+                  fill="hsl(var(--primary))"
+                  radius={[3, 3, 0, 0]}
+                  cursor="pointer"
+                  onClick={(d: { payload?: { date?: string } }) => {
+                    const key = d?.payload?.date;
+                    if (key) setDayFilter(new Date(`${key}T00:00:00`));
+                  }}
+                />
+                <Line type="monotone" dataKey="calls" stroke="#a855f7" strokeWidth={2} dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+            <div className="mt-1 text-[10px] text-muted-foreground">
+              Click a day to filter the call log · {monthSeries.reduce((s, d) => s + d.calls, 0)} calls this month
+            </div>
+          </ChartCard>
+        </section>
+
+        {/* Daily briefing */}
+        <section className="mt-3">
+          <DailyBriefing
+            content={insightsQuery.data?.daily ?? ""}
+            loading={insightsQuery.isLoading}
+            empty={logs.length === 0}
+          />
+        </section>
+
         {/* Table + insights */}
-        <section className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <section className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
           <div className="rounded-xl border bg-card shadow-sm">
             <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
               <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -800,7 +862,7 @@ function Dashboard() {
                 No calls match. Paste a summary above to log one.
               </div>
             ) : (
-              <div className="max-h-[560px] overflow-auto">
+              <div className="max-h-[420px] overflow-auto">
                 <Table>
                   <TableHeader className="sticky top-0 z-[1] bg-card">
                     <TableRow className="text-[10px] uppercase">
@@ -853,13 +915,6 @@ function Dashboard() {
                   <ScoreCard score={insightsQuery.data.score} label={insightsQuery.data.scoreLabel} />
                 )}
                 <div>
-                  <div className="mb-1.5 flex items-center gap-1.5">
-                    <Sparkles className="h-3.5 w-3.5 text-primary" />
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Daily briefing</h3>
-                  </div>
-                  <MarkdownBlock content={insightsQuery.data?.daily ?? ""} />
-                </div>
-                <div className="border-t pt-3">
                   <div className="mb-1.5 flex items-center gap-1.5">
                     <TrendingUp className="h-3.5 w-3.5 text-primary" />
                     <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overall performance</h3>
@@ -1235,6 +1290,78 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
     <div className="rounded-xl border bg-card p-3 shadow-sm">
       <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</div>
       {children}
+    </div>
+  );
+}
+
+/** Rotating daily-briefing highlights with a cross-fade transition. */
+function DailyBriefing({ content, loading, empty }: { content: string; loading: boolean; empty: boolean }) {
+  const highlights = useMemo(
+    () =>
+      content
+        .split("\n")
+        .map((l) => l.replace(/^\s*(?:[-*+•]|\d+[.)])\s*/, "").trim())
+        .filter((l) => l.length > 0 && !/^#{1,6}\s/.test(l)),
+    [content],
+  );
+  const [index, setIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+
+  useEffect(() => {
+    setIndex(0);
+  }, [content]);
+
+  useEffect(() => {
+    if (paused || highlights.length < 2) return;
+    const id = setInterval(() => setIndex((i) => (i + 1) % highlights.length), 6000);
+    return () => clearInterval(id);
+  }, [paused, highlights.length]);
+
+  const active = highlights[Math.min(index, Math.max(0, highlights.length - 1))] ?? "";
+
+  return (
+    <div
+      className="rounded-xl border bg-card p-3 shadow-sm"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+    >
+      <div className="mb-1.5 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" />
+          <h3 className="truncate text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Daily briefing
+          </h3>
+        </div>
+        {highlights.length > 1 && (
+          <div className="flex shrink-0 items-center gap-1">
+            {highlights.map((h, i) => (
+              <button
+                key={i}
+                type="button"
+                aria-label={`Show highlight ${i + 1}`}
+                onClick={() => setIndex(i)}
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full transition-colors",
+                  i === index ? "bg-primary" : "bg-muted-foreground/30 hover:bg-muted-foreground/60",
+                )}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="min-h-[38px]">
+        {empty ? (
+          <p className="text-xs text-muted-foreground">Log at least one call to see your daily briefing.</p>
+        ) : loading ? (
+          <p className="text-xs text-muted-foreground">Analyzing your calls…</p>
+        ) : highlights.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No briefing highlights yet.</p>
+        ) : (
+          <div key={index} className="animate-fade-in">
+            <MarkdownBlock content={active} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
