@@ -385,6 +385,8 @@ function normalize(a: Analysis): Analysis {
   const mapped: Analysis["category"][] = [];
   for (const c of raw) {
     if (c === "other") { if (!mapped.includes("inquiry")) mapped.push("inquiry"); continue; }
+    // "Payment promised" is retired — a promise to pay is an inquiry plus a follow-up.
+    if (c === "payment_promise") { if (!mapped.includes("inquiry")) mapped.push("inquiry"); continue; }
     // Frozen folds into closed; don't double-count when the list already had a close.
     if (c === "freeze") { if (!hadClosed) mapped.push("closed"); continue; }
     mapped.push(c);
