@@ -665,10 +665,10 @@ function Dashboard() {
             </p>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-2 sm:grid-cols-2">
             {role === "cem" ? (
               <ChartCard title="Retention outcomes (14d)">
-                <ResponsiveContainer width="100%" height={140}>
+                <ResponsiveContainer width="100%" height={120}>
                   <BarChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
                     <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
@@ -683,7 +683,7 @@ function Dashboard() {
               </ChartCard>
             ) : (
               <ChartCard title="Payments vs refunds $ / day (14d)">
-                <ResponsiveContainer width="100%" height={140}>
+                <ResponsiveContainer width="100%" height={120}>
                   <BarChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
                     <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
@@ -702,9 +702,9 @@ function Dashboard() {
                 <EmptyChart />
               ) : (
                 <>
-                  <ResponsiveContainer width="100%" height={140}>
+                  <ResponsiveContainer width="100%" height={120}>
                     <PieChart>
-                      <Pie data={categoryPie} dataKey="value" innerRadius={34} outerRadius={58} paddingAngle={2} stroke="none">
+                      <Pie data={categoryPie} dataKey="value" innerRadius={28} outerRadius={50} paddingAngle={2} stroke="none">
                         {categoryPie.map((d) => (
                           <Cell key={d.key} fill={d.fill} />
                         ))}
@@ -718,7 +718,7 @@ function Dashboard() {
             </ChartCard>
 
             <ChartCard title="Discount $ / day (14d)">
-              <ResponsiveContainer width="100%" height={140}>
+              <ResponsiveContainer width="100%" height={120}>
                 <LineChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
                   <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
@@ -734,7 +734,7 @@ function Dashboard() {
             </ChartCard>
 
             <ChartCard title="Follow-ups">
-              <div className="flex h-[140px] flex-col items-center justify-center gap-1">
+              <div className="flex h-[120px] flex-col items-center justify-center gap-1">
                 <BellRing className="h-5 w-5 text-amber-500" />
                 <div className="text-3xl font-semibold tabular-nums">{stats.followUps}</div>
                 <div className="text-[11px] text-muted-foreground">calls need follow-up</div>
@@ -743,8 +743,45 @@ function Dashboard() {
           </div>
         </section>
 
+        {/* Monthly call volume */}
+        <section className="mt-3">
+          <ChartCard title="Calls logged per day (last 30 days)">
+            <ResponsiveContainer width="100%" height={150}>
+              <ComposedChart data={monthSeries} margin={{ top: 5, right: 8, left: -24, bottom: 0 }}>
+                <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={3} />
+                <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
+                <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v: number) => [v, "Calls"]} />
+                <Bar
+                  dataKey="calls"
+                  fill="hsl(var(--primary))"
+                  radius={[3, 3, 0, 0]}
+                  cursor="pointer"
+                  onClick={(d: { payload?: { date?: string } }) => {
+                    const key = d?.payload?.date;
+                    if (key) setDayFilter(new Date(`${key}T00:00:00`));
+                  }}
+                />
+                <Line type="monotone" dataKey="calls" stroke="#a855f7" strokeWidth={2} dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+            <div className="mt-1 text-[10px] text-muted-foreground">
+              Click a day to filter the call log · {monthSeries.reduce((s, d) => s + d.calls, 0)} calls this month
+            </div>
+          </ChartCard>
+        </section>
+
+        {/* Daily briefing */}
+        <section className="mt-3">
+          <DailyBriefing
+            content={insightsQuery.data?.daily ?? ""}
+            loading={insightsQuery.isLoading}
+            empty={logs.length === 0}
+          />
+        </section>
+
         {/* Table + insights */}
-        <section className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <section className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
           <div className="rounded-xl border bg-card shadow-sm">
             <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
               <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
