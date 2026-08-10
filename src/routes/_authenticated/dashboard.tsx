@@ -749,31 +749,88 @@ function Dashboard() {
           </div>
         </section>
 
-        {/* Monthly call volume */}
-        <section className="mt-3">
+        {/* Monthly call volume (scatter) + weekday outcome mix */}
+        <section className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
           <ChartCard title="Calls logged per day (last 30 days)">
-            <ResponsiveContainer width="100%" height={150}>
-              <ComposedChart data={monthSeries} margin={{ top: 5, right: 8, left: -24, bottom: 0 }}>
-                <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={3} />
-                <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
-                <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v: number) => [v, "Calls"]} />
-                <Bar
-                  dataKey="calls"
-                  fill="hsl(var(--primary))"
-                  radius={[3, 3, 0, 0]}
-                  cursor="pointer"
-                  onClick={(d: { payload?: { date?: string } }) => {
-                    const key = d?.payload?.date;
-                    if (key) setDayFilter(new Date(`${key}T00:00:00`));
+            <ResponsiveContainer width="100%" height={160}>
+              <ScatterChart margin={{ top: 8, right: 12, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis
+                  dataKey="idx"
+                  type="number"
+                  domain={[0, monthSeries.length - 1]}
+                  ticks={monthSeries.filter((_, i) => i % 4 === 0).map((d) => d.idx)}
+                  tickFormatter={(i: number) => monthSeries[i]?.day ?? ""}
+                  tick={{ fontSize: 10 }}
+                />
+                <YAxis dataKey="calls" tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
+                <ZAxis dataKey="calls" range={[30, 320]} />
+                <Tooltip
+                  contentStyle={{ fontSize: 11 }}
+                  cursor={{ strokeDasharray: "3 3" }}
+                  content={({ active, payload }) => {
+                    if (!active || !payload?.length) return null;
+                    const p = payload[0].payload as (typeof monthSeries)[number];
+                    return (
+                      <div className="rounded-md border bg-popover px-2 py-1 text-[11px] shadow-sm">
+                        <div className="font-medium">{p.day}</div>
+                        <div className="text-muted-foreground">{p.calls} call{p.calls === 1 ? "" : "s"}</div>
+                      </div>
+                    );
                   }}
                 />
-                <Line type="monotone" dataKey="calls" stroke="#a855f7" strokeWidth={2} dot={false} />
-              </ComposedChart>
+                {monthAvg > 0 && (
+                  <ReferenceLine
+                    y={monthAvg}
+                    stroke="#a855f7"
+                    strokeDasharray="4 4"
+                    label={{ value: `avg ${monthAvg}`, position: "insideTopRight", fontSize: 9, fill: "#a855f7" }}
+                  />
+                )}
+                <Scatter
+                  data={monthSeries.filter((d) => d.calls > 0)}
+                  fill="hsl(var(--primary))"
+                  fillOpacity={0.75}
+                  cursor="pointer"
+                  onClick={(d: { date?: string }) => {
+                    if (d?.date) setDayFilter(new Date(`${d.date}T00:00:00`));
+                  }}
+                />
+              </ScatterChart>
             </ResponsiveContainer>
-            <div className="mt-1 text-[10px] text-muted-foreground">
-              Click a day to filter the call log · {monthSeries.reduce((s, d) => s + d.calls, 0)} calls this month
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 text-[10px] text-muted-foreground">
+              <span>Click a dot to open that day</span>
+              <span>· {monthTotal} calls / 30 days</span>
+              {bestDay && <span>· busiest {bestDay.day} ({bestDay.calls})</span>}
+              {activeDays > 0 && <span>· {activeDays} active days</span>}
             </div>
+          </ChartCard>
+
+          <ChartCard title="Outcome mix by weekday (30d)">
+            {dowSeries.every((d) => d.total === 0) ? (
+              <EmptyChart />
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height={160}>
+                  <BarChart data={dowSeries} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                    <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
+                    <Tooltip contentStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="win" stackId="d" name={role === "cem" ? "Saved / resign" : "Resolved"} fill={CATEGORY_META.saved.hex} />
+                    <Bar dataKey="loss" stackId="d" name="Closed / cancel pending" fill={CATEGORY_META.closed.hex} />
+                    <Bar dataKey="rest" stackId="d" name="Other outcomes" fill={CATEGORY_META.inquiry.hex} radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+                <Legend
+                  items={[
+                    [role === "cem" ? "Saved / resign" : "Resolved", CATEGORY_META.saved.hex],
+                    ["Closed / pending", CATEGORY_META.closed.hex],
+                    ["Other", CATEGORY_META.inquiry.hex],
+                  ]}
+                />
+              </>
+            )}
           </ChartCard>
         </section>
 
