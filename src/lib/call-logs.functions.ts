@@ -603,9 +603,14 @@ export const updateCallLog = createServerFn({ method: "POST" })
       patch.categories = [patch.category];
     }
     if (Array.isArray(patch.categories)) {
+      // Frozen folds into closed.
+      patch.categories = patch.categories.map((c) => (c === "freeze" ? "closed" : c));
+      patch.category = patch.categories[0];
       // Keep the escalation flag in sync with the outcome list.
       patch.escalated_to_cem = patch.categories.includes("escalated_to_cem") || patch.escalated_to_cem === true;
       if (!patch.categories.includes("lead")) patch.lead_sold = false;
+      // Confirming outcomes clears the review flag unless explicitly set.
+      if (patch.needs_review === undefined) patch.needs_review = false;
     }
     if (typeof patch.call_date === "string" && patch.call_date) {
       patch.date_source = "user_selected";
