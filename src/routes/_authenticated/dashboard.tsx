@@ -29,7 +29,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { parseUploadedFile, type ParsedEntry } from "@/lib/parse-uploaded-file";
-import { format } from "date-fns";
+import { format, isToday } from "date-fns";
 import {
   Table,
   TableBody,
@@ -2081,6 +2081,231 @@ type DailyRow = {
   cats: Record<Category, number>;
   coupons: number; payments: number; refunds: number; followUps: number;
 };
+
+/** Horizontal day switcher — the last 10 days, newest first, with per-day call counts. */
+function DayTabs({
+  rows,
+  selected,
+  onSelect,
+}: {
+  rows: DailyRow[];
+  selected: Date | null;
+  onSelect: (d: Date | null) => void;
+}) {
+  const days = useMemo(() => {
+    const byKey = new Map(rows.map((r) => [r.key, r]));
+    const out: { key: string; date: Date; total: number }[] = [];
+    for (let i = 0; i < 10; i++) {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - i);
+      const key = toDayKey(d);
+      out.push({ key, date: d, total: byKey.get(key)?.total ?? 0 });
+    }
+    return out;
+  }, [rows]);
+  const selKey = selected ? toDayKey(selected) : null;
+
+  return (
+    <div className="flex items-center gap-1 overflow-x-auto border-b px-3 py-1.5">
+      {days.map((d) => {
+        const active = selKey === d.key;
+        return (
+          <button
+            key={d.key}
+            type="button"
+            onClick={() => onSelect(d.date)}
+            className={cn(
+              "flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] transition-colors",
+              active
+                ? "border-primary bg-primary/10 font-semibold text-foreground"
+                : "border-transparent text-muted-foreground hover:bg-muted",
+            )}
+          >
+            <span>{isToday(d.date) ? "Today" : format(d.date, "EEE d")}</span>
+            <span
+              className={cn(
+                "rounded px-1 tabular-nums",
+                d.total > 0 ? "bg-primary/15 text-primary" : "text-muted-foreground/50",
+              )}
+            >
+              {d.total}
+            </span>
+          </button>
+        );
+      })}
+      <button
+        type="button"
+        onClick={() => onSelect(null)}
+        className={cn(
+          "ml-auto shrink-0 rounded-md border px-2 py-1 text-[11px]",
+          selKey === null ? "border-primary bg-primary/10 font-semibold" : "border-transparent text-muted-foreground hover:bg-muted",
+        )}
+      >
+        All days
+      </button>
+    </div>
+  );
+}
+
+/** Compact totals for the day currently open in the log. */
+function DayTotalsRow({ row, role }: { row: DailyRow | null; role: Role }) {
+  const cols: Category[] =
+    role === "cem"
+      ? ["saved", "closed", "resign", "lead", "cancel_pending", "pending_cancel"]
+      : ["reschedule", "reservice", "payment", "billing_update", "refund", "resign"];
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b bg-muted/30 px-3 py-1.5 text-[11px]">
+      <span className="font-semibold uppercase tracking-wide text-muted-foreground">
+        {row?.total ?? 0} call{(row?.total ?? 0) === 1 ? "" : "s"}
+      </span>
+      {cols.map((c) => (
+        <span key={c} className="flex items-center gap-1">
+          <span className={cn("h-1.5 w-1.5 rounded-full", CATEGORY_META[c].dot)} />
+          <span className="text-muted-foreground">{CATEGORY_META[c].label}</span>
+          <span className="font-semibold tabular-nums">{row?.cats[c] ?? 0}</span>
+        </span>
+      ))}
+      <span className="ml-auto flex items-center gap-3">
+        {(row?.coupons ?? 0) > 0 && (
+          <span className="text-purple-600">Coupons ${Math.round(row!.coupons).toLocaleString()}</span>
+        )}
+        {(row?.payments ?? 0) > 0 && (
+          <span className="text-emerald-700">Payments ${Math.round(row!.payments).toLocaleString()}</span>
+        )}
+        {(row?.refunds ?? 0) > 0 && (
+          <span className="text-fuchsia-600">Refunds ${Math.round(row!.refunds).toLocaleString()}</span>
+        )}
+        {(row?.followUps ?? 0) > 0 && <span className="text-amber-700">{row!.followUps} follow-up</span>}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Semi-transparent floating panel pinned to the right edge that cycles through
+ * the agent score, performance highlights, and standout stats.
+ */
+function InsightTicker({
+  score,
+  scoreLabel,
+  overall,
+  loading,
+  empty,
+  stats,
+}: {
+  score: number | null;
+  scoreLabel: string;
+  overall: string;
+  loading: boolean;
+  empty: boolean;
+  stats: { calls: number; saveRate: number; today: number; avgPerDay: number; coupons: number };
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [index, setIndex] = useState(0);
+
+  const slides = useMemo(() => {
+    const out: { title: string; body: string }[] = [];
+    if (score != null) {
+      out.push({ title: "Agent score", body: `**${score}/100** — ${scoreLabel}` });
+    }
+    for (const line of overall
+      .split("\n")
+      .map((l) => l.replace(/^\s*(?:[-*+•]|\d+[.)])\s*/, "").trim())
+      .filter((l) => l.length > 0 && !/^#{1,6}\s/.test(l))
+      .slice(0, 6)) {
+      out.push({ title: "Performance", body: line });
+    }
+    out.push({
+      title: "At a glance",
+      body: `**${stats.today}** calls today · **${stats.calls}** logged total · **${stats.avgPerDay}** avg / active day`,
+    });
+    out.push({
+      title: "At a glance",
+      body: `Save rate **${stats.saveRate}%** · **$${Math.round(stats.coupons).toLocaleString()}** in coupons given`,
+    });
+    return out;
+  }, [score, scoreLabel, overall, stats]);
+
+  useEffect(() => {
+    setIndex(0);
+  }, [overall, score]);
+
+  useEffect(() => {
+    if (paused || collapsed || slides.length < 2) return;
+    const id = setInterval(() => setIndex((i) => (i + 1) % slides.length), 7000);
+    return () => clearInterval(id);
+  }, [paused, collapsed, slides.length]);
+
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={() => setCollapsed(false)}
+        className="fixed right-3 top-1/2 z-20 flex -translate-y-1/2 items-center gap-1.5 rounded-full border bg-card/80 px-3 py-2 text-[11px] font-semibold shadow-lg backdrop-blur transition hover:bg-card"
+      >
+        <Gauge className="h-3.5 w-3.5 text-primary" />
+        {score != null ? `${score}/100` : "Insights"}
+      </button>
+    );
+  }
+
+  const slide = slides[Math.min(index, slides.length - 1)];
+
+  return (
+    <div
+      className="pointer-events-auto fixed right-3 top-1/2 z-20 w-[260px] -translate-y-1/2 rounded-xl border bg-card/70 p-3 shadow-lg backdrop-blur-md transition-colors hover:bg-card/90"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+    >
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <Gauge className="h-3.5 w-3.5 shrink-0 text-primary" />
+        <span className="truncate text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          {empty || loading ? "Your performance" : slide?.title}
+        </span>
+        <button
+          type="button"
+          aria-label="Collapse insights"
+          onClick={() => setCollapsed(true)}
+          className="ml-auto text-muted-foreground hover:text-foreground"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <div className="min-h-[64px] text-xs">
+        {empty ? (
+          <p className="text-muted-foreground">Log a call to unlock your score and performance review.</p>
+        ) : loading ? (
+          <p className="text-muted-foreground">Analyzing your calls…</p>
+        ) : (
+          <div key={index} className="animate-fade-in">
+            <MarkdownBlock content={slide?.body ?? ""} />
+          </div>
+        )}
+      </div>
+      {!empty && !loading && slides.length > 1 && (
+        <div className="mt-2 flex items-center gap-1">
+          {slides.map((s, i) => (
+            <button
+              key={i}
+              type="button"
+              aria-label={`Show insight ${i + 1}`}
+              onClick={() => setIndex(i)}
+              className={cn(
+                "h-1.5 w-1.5 rounded-full transition-colors",
+                i === index ? "bg-primary" : "bg-muted-foreground/30 hover:bg-muted-foreground/60",
+              )}
+            />
+          ))}
+          {score != null && (
+            <span className="ml-auto text-[10px] font-semibold tabular-nums text-primary">{score}/100</span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function DailyTotalsTracker({
   rows,
