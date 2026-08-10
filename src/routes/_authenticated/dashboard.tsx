@@ -118,7 +118,7 @@ type Category =
 const ALL_CATEGORIES: Category[] = [
   "saved", "closed", "resign", "reactivation", "lead",
   "cancel_pending", "pending_cancel",
-  "reschedule", "reservice", "payment", "payment_promise", "billing_update",
+  "reschedule", "reservice", "payment", "billing_update",
   "refund", "back_on_schedule", "inquiry", "escalation",
   "escalated_to_cem", "other",
 ];
@@ -127,12 +127,14 @@ function logCategories(l: { categories?: string[] | null; category: string }): C
   const arr = Array.isArray(l.categories) && l.categories.length > 0 ? l.categories : [l.category];
   // A frozen account is the same retention result as a close — fold legacy "freeze" tags in,
   // without double-counting when the log already carries a close.
-  const mapped = arr.map((c) => (c === "freeze" ? "closed" : c));
+  // "Payment promised" is retired — legacy rows read as an inquiry.
+  const mapped = arr.map((c) => (c === "freeze" ? "closed" : c === "payment_promise" ? "inquiry" : c));
   const out: Category[] = [];
   arr.forEach((orig, i) => {
     const c = mapped[i];
     if (!(ALL_CATEGORIES as string[]).includes(c)) return;
     if (orig === "freeze" && arr.includes("closed")) return;
+    if (orig === "payment_promise" && out.includes("inquiry")) return;
     out.push(c as Category);
   });
   return out;
@@ -176,13 +178,13 @@ const CATEGORY_META: Record<
 // Which category chips get top-of-page KPI cards per role.
 const KPI_BY_ROLE: Record<Role, Category[]> = {
   cem: ["saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel", "inquiry"],
-  ces: ["reschedule", "reservice", "payment", "payment_promise", "billing_update", "refund", "resign", "escalated_to_cem"],
+  ces: ["reschedule", "reservice", "payment", "billing_update", "refund", "resign", "lead", "escalated_to_cem"],
 };
 
 // Which outcomes drive the trend chart + category mix per role.
 const CHART_CATEGORIES_BY_ROLE: Record<Role, Category[]> = {
   cem: ["saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel"],
-  ces: ["reschedule", "reservice", "payment", "payment_promise", "billing_update", "refund", "resign", "lead", "inquiry", "escalated_to_cem"],
+  ces: ["reschedule", "reservice", "payment", "billing_update", "refund", "resign", "lead", "inquiry", "escalated_to_cem"],
 };
 
 function Dashboard() {
