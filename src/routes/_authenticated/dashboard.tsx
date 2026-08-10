@@ -29,7 +29,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { parseUploadedFile, type ParsedEntry } from "@/lib/parse-uploaded-file";
-import { format } from "date-fns";
+import { format, isToday } from "date-fns";
 import {
   Table,
   TableBody,
@@ -44,15 +44,18 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  ComposedChart,
   Line,
   LineChart,
   Pie,
   PieChart,
+  ReferenceLine,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
+  ZAxis,
 } from "recharts";
 import { toast } from "sonner";
 import {
@@ -118,7 +121,7 @@ type Category =
 const ALL_CATEGORIES: Category[] = [
   "saved", "closed", "resign", "reactivation", "lead",
   "cancel_pending", "pending_cancel",
-  "reschedule", "reservice", "payment", "payment_promise", "billing_update",
+  "reschedule", "reservice", "payment", "billing_update",
   "refund", "back_on_schedule", "inquiry", "escalation",
   "escalated_to_cem", "other",
 ];
@@ -127,12 +130,14 @@ function logCategories(l: { categories?: string[] | null; category: string }): C
   const arr = Array.isArray(l.categories) && l.categories.length > 0 ? l.categories : [l.category];
   // A frozen account is the same retention result as a close — fold legacy "freeze" tags in,
   // without double-counting when the log already carries a close.
-  const mapped = arr.map((c) => (c === "freeze" ? "closed" : c));
+  // "Payment promised" is retired — legacy rows read as an inquiry.
+  const mapped = arr.map((c) => (c === "freeze" ? "closed" : c === "payment_promise" ? "inquiry" : c));
   const out: Category[] = [];
   arr.forEach((orig, i) => {
     const c = mapped[i];
     if (!(ALL_CATEGORIES as string[]).includes(c)) return;
     if (orig === "freeze" && arr.includes("closed")) return;
+    if (orig === "payment_promise" && out.includes("inquiry")) return;
     out.push(c as Category);
   });
   return out;
@@ -176,13 +181,13 @@ const CATEGORY_META: Record<
 // Which category chips get top-of-page KPI cards per role.
 const KPI_BY_ROLE: Record<Role, Category[]> = {
   cem: ["saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel", "inquiry"],
-  ces: ["reschedule", "reservice", "payment", "payment_promise", "billing_update", "refund", "resign", "escalated_to_cem"],
+  ces: ["reschedule", "reservice", "payment", "billing_update", "refund", "resign", "lead", "escalated_to_cem"],
 };
 
 // Which outcomes drive the trend chart + category mix per role.
 const CHART_CATEGORIES_BY_ROLE: Record<Role, Category[]> = {
   cem: ["saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel"],
-  ces: ["reschedule", "reservice", "payment", "payment_promise", "billing_update", "refund", "resign", "lead", "inquiry", "escalated_to_cem"],
+  ces: ["reschedule", "reservice", "payment", "billing_update", "refund", "resign", "lead", "inquiry", "escalated_to_cem"],
 };
 
 function Dashboard() {
@@ -216,7 +221,8 @@ function Dashboard() {
   const [callDate, setCallDate] = useState<Date>(new Date());
   const [dateOpen, setDateOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [dayFilter, setDayFilter] = useState<Date | null>(null);
+  // The log opens on today; the day tabs / calendar move it, "All days" clears it.
+  const [dayFilter, setDayFilter] = useState<Date | null>(() => new Date());
   const [dayFilterOpen, setDayFilterOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -415,7 +421,7 @@ function Dashboard() {
 
   // Total calls logged per day over the last 30 days (zero-filled).
   const monthSeries = useMemo(() => {
-    const days: { day: string; date: string; calls: number }[] = [];
+    const days: { day: string; date: string; calls: number; idx: number }[] = [];
     const map = new Map<string, (typeof days)[number]>();
     for (let i = 29; i >= 0; i--) {
       const d = new Date();
@@ -426,6 +432,7 @@ function Dashboard() {
         day: d.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
         date: key,
         calls: 0,
+        idx: 29 - i,
       };
       days.push(entry);
       map.set(key, entry);
@@ -436,6 +443,38 @@ function Dashboard() {
     }
     return days;
   }, [logs]);
+
+  const monthTotal = useMemo(() => monthSeries.reduce((s, d) => s + d.calls, 0), [monthSeries]);
+  const activeDays = useMemo(() => monthSeries.filter((d) => d.calls > 0).length, [monthSeries]);
+  const monthAvg = activeDays ? Math.round((monthTotal / activeDays) * 10) / 10 : 0;
+  const bestDay = useMemo(
+    () => monthSeries.reduce<(typeof monthSeries)[number] | null>((best, d) => (d.calls > (best?.calls ?? 0) ? d : best), null),
+    [monthSeries],
+  );
+
+  // Which weekdays produce wins vs. losses over the last 30 days.
+  const dowSeries = useMemo(() => {
+    const labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const rows = labels.map((label) => ({ label, win: 0, loss: 0, rest: 0, total: 0 }));
+    const cutoff = new Date();
+    cutoff.setHours(0, 0, 0, 0);
+    cutoff.setDate(cutoff.getDate() - 29);
+    const winCats: Category[] =
+      role === "cem" ? ["saved", "resign", "reactivation"] : ["reschedule", "reservice", "payment", "billing_update", "resign"];
+    const lossCats: Category[] = ["closed", "cancel_pending", "pending_cancel", "escalated_to_cem"];
+    for (const l of logs) {
+      const d = new Date(l.call_date ?? l.created_at);
+      if (d < cutoff) continue;
+      const row = rows[d.getDay()];
+      for (const c of logCategories(l)) {
+        row.total += 1;
+        if (winCats.includes(c)) row.win += 1;
+        else if (lossCats.includes(c)) row.loss += 1;
+        else row.rest += 1;
+      }
+    }
+    return rows;
+  }, [logs, role]);
 
   // Per-day tally across ALL history — for the Daily Totals tracker.
   const dailyTotals = useMemo(() => {
@@ -571,7 +610,15 @@ function Dashboard() {
           ) : (
             <MiniKpi icon={Wallet} label="Payments collected" value={`$${stats.paymentTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} />
           )}
-          <MiniKpi icon={CalendarClock} label="Avg agreement" value={avgAgreement ? `${avgAgreement} mo` : "—"} />
+          {role === "ces" ? (
+            <MiniKpi
+              icon={Ticket}
+              label={`Coupons given (${stats.couponsUsed})`}
+              value={`$${stats.couponTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+            />
+          ) : (
+            <MiniKpi icon={CalendarClock} label="Avg agreement" value={avgAgreement ? `${avgAgreement} mo` : "—"} />
+          )}
         </section>
 
         {/* Commission strip */}
@@ -743,31 +790,88 @@ function Dashboard() {
           </div>
         </section>
 
-        {/* Monthly call volume */}
-        <section className="mt-3">
+        {/* Monthly call volume (scatter) + weekday outcome mix */}
+        <section className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
           <ChartCard title="Calls logged per day (last 30 days)">
-            <ResponsiveContainer width="100%" height={150}>
-              <ComposedChart data={monthSeries} margin={{ top: 5, right: 8, left: -24, bottom: 0 }}>
-                <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={3} />
-                <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
-                <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v: number) => [v, "Calls"]} />
-                <Bar
-                  dataKey="calls"
-                  fill="hsl(var(--primary))"
-                  radius={[3, 3, 0, 0]}
-                  cursor="pointer"
-                  onClick={(d: { payload?: { date?: string } }) => {
-                    const key = d?.payload?.date;
-                    if (key) setDayFilter(new Date(`${key}T00:00:00`));
+            <ResponsiveContainer width="100%" height={160}>
+              <ScatterChart margin={{ top: 8, right: 12, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis
+                  dataKey="idx"
+                  type="number"
+                  domain={[0, monthSeries.length - 1]}
+                  ticks={monthSeries.filter((_, i) => i % 4 === 0).map((d) => d.idx)}
+                  tickFormatter={(i: number) => monthSeries[i]?.day ?? ""}
+                  tick={{ fontSize: 10 }}
+                />
+                <YAxis dataKey="calls" tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
+                <ZAxis dataKey="calls" range={[30, 320]} />
+                <Tooltip
+                  contentStyle={{ fontSize: 11 }}
+                  cursor={{ strokeDasharray: "3 3" }}
+                  content={({ active, payload }) => {
+                    if (!active || !payload?.length) return null;
+                    const p = payload[0].payload as (typeof monthSeries)[number];
+                    return (
+                      <div className="rounded-md border bg-popover px-2 py-1 text-[11px] shadow-sm">
+                        <div className="font-medium">{p.day}</div>
+                        <div className="text-muted-foreground">{p.calls} call{p.calls === 1 ? "" : "s"}</div>
+                      </div>
+                    );
                   }}
                 />
-                <Line type="monotone" dataKey="calls" stroke="#a855f7" strokeWidth={2} dot={false} />
-              </ComposedChart>
+                {monthAvg > 0 && (
+                  <ReferenceLine
+                    y={monthAvg}
+                    stroke="#a855f7"
+                    strokeDasharray="4 4"
+                    label={{ value: `avg ${monthAvg}`, position: "insideTopRight", fontSize: 9, fill: "#a855f7" }}
+                  />
+                )}
+                <Scatter
+                  data={monthSeries.filter((d) => d.calls > 0)}
+                  fill="hsl(var(--primary))"
+                  fillOpacity={0.75}
+                  cursor="pointer"
+                  onClick={(d: { date?: string }) => {
+                    if (d?.date) setDayFilter(new Date(`${d.date}T00:00:00`));
+                  }}
+                />
+              </ScatterChart>
             </ResponsiveContainer>
-            <div className="mt-1 text-[10px] text-muted-foreground">
-              Click a day to filter the call log · {monthSeries.reduce((s, d) => s + d.calls, 0)} calls this month
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 text-[10px] text-muted-foreground">
+              <span>Click a dot to open that day</span>
+              <span>· {monthTotal} calls / 30 days</span>
+              {bestDay && <span>· busiest {bestDay.day} ({bestDay.calls})</span>}
+              {activeDays > 0 && <span>· {activeDays} active days</span>}
             </div>
+          </ChartCard>
+
+          <ChartCard title="Outcome mix by weekday (30d)">
+            {dowSeries.every((d) => d.total === 0) ? (
+              <EmptyChart />
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height={160}>
+                  <BarChart data={dowSeries} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                    <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
+                    <Tooltip contentStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="win" stackId="d" name={role === "cem" ? "Saved / resign" : "Resolved"} fill={CATEGORY_META.saved.hex} />
+                    <Bar dataKey="loss" stackId="d" name="Closed / cancel pending" fill={CATEGORY_META.closed.hex} />
+                    <Bar dataKey="rest" stackId="d" name="Other outcomes" fill={CATEGORY_META.inquiry.hex} radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+                <Legend
+                  items={[
+                    [role === "cem" ? "Saved / resign" : "Resolved", CATEGORY_META.saved.hex],
+                    ["Closed / pending", CATEGORY_META.closed.hex],
+                    ["Other", CATEGORY_META.inquiry.hex],
+                  ]}
+                />
+              </>
+            )}
           </ChartCard>
         </section>
 
@@ -780,12 +884,12 @@ function Dashboard() {
           />
         </section>
 
-        {/* Table + insights */}
-        <section className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+        {/* Call log — one day at a time */}
+        <section className="mt-3">
           <div className="rounded-xl border bg-card shadow-sm">
             <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
               <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Call log
+                {dayFilter ? (isToday(dayFilter) ? "Today's calls" : format(dayFilter, "EEE, MMM d")) : "All calls"}
                 <span className="ml-1.5 text-muted-foreground/60">{filtered.length}</span>
               </h2>
               <div className="flex flex-1 items-center gap-2">
@@ -842,24 +946,34 @@ function Dashboard() {
                     className="h-8 pl-7 text-xs"
                   />
                 </div>
-                {(filter !== "all" || query || dayFilter) && (
+                {(filter !== "all" || query || !dayFilter || !isToday(dayFilter)) && (
                   <button
                     className="text-[11px] text-muted-foreground hover:text-foreground"
                     onClick={() => {
                       setFilter("all");
                       setQuery("");
-                      setDayFilter(null);
+                      setDayFilter(new Date());
                     }}
                   >
-                    Clear
+                    Reset to today
                   </button>
                 )}
               </div>
             </div>
 
+            {/* Day tabs — last 10 days, with each day's call count */}
+            <DayTabs
+              rows={dailyTotals}
+              selected={dayFilter}
+              onSelect={(d) => setDayFilter(d)}
+            />
+
+            {/* Totals for the selected day */}
+            {dayFilter && <DayTotalsRow row={dailyTotals.find((r) => r.key === toDayKey(dayFilter)) ?? null} role={role} />}
+
             {filtered.length === 0 ? (
               <div className="p-8 text-center text-xs text-muted-foreground">
-                No calls match. Paste a summary above to log one.
+                {dayFilter ? "No calls logged for this day yet." : "No calls match. Paste a summary above to log one."}
               </div>
             ) : (
               <div className="max-h-[420px] overflow-auto">
@@ -891,51 +1005,24 @@ function Dashboard() {
               </div>
             )}
           </div>
-
-          <aside className="rounded-xl border bg-card p-3 shadow-sm">
-            {logs.length === 0 ? (
-              <>
-                <div className="mb-2 flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5 text-primary" />
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI insights</h3>
-                </div>
-                <p className="text-xs text-muted-foreground">Log at least one call to see insights.</p>
-              </>
-            ) : insightsQuery.isLoading ? (
-              <>
-                <div className="mb-2 flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5 text-primary" />
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI insights</h3>
-                </div>
-                <p className="text-xs text-muted-foreground">Analyzing…</p>
-              </>
-            ) : (
-              <div className="space-y-3">
-                {insightsQuery.data?.score != null && (
-                  <ScoreCard score={insightsQuery.data.score} label={insightsQuery.data.scoreLabel} />
-                )}
-                <div>
-                  <div className="mb-1.5 flex items-center gap-1.5">
-                    <TrendingUp className="h-3.5 w-3.5 text-primary" />
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overall performance</h3>
-                  </div>
-                  <MarkdownBlock content={insightsQuery.data?.overall ?? ""} />
-                </div>
-              </div>
-            )}
-          </aside>
-        </section>
-
-        {/* Daily totals tracker */}
-        <section className="mt-4">
-          <DailyTotalsTracker
-            rows={dailyTotals}
-            selected={dayFilter}
-            onSelect={(d) => setDayFilter(d)}
-            role={role}
-          />
         </section>
       </main>
+
+      {/* Floating, semi-transparent performance ticker pinned to the right edge */}
+      <InsightTicker
+        score={insightsQuery.data?.score ?? null}
+        scoreLabel={insightsQuery.data?.scoreLabel ?? ""}
+        overall={insightsQuery.data?.overall ?? ""}
+        loading={insightsQuery.isLoading}
+        empty={logs.length === 0}
+        stats={{
+          calls: logs.length,
+          saveRate,
+          today: dailyTotals.find((r) => r.key === toDayKey(new Date()))?.total ?? 0,
+          avgPerDay: monthAvg,
+          coupons: stats.couponTotal,
+        }}
+      />
 
       <ImportDialog
         open={uploadOpen}
@@ -1185,6 +1272,10 @@ function CommissionStrip({
         value={`${stats.lead ?? 0}${stats.leadsSold ? ` (${stats.leadsSold} sold)` : ""}`}
       />
       {role === "ces" && <CommissionStat label="Escalated to CEM" value={String(stats.escalatedToCem ?? 0)} />}
+      <CommissionStat
+        label={`Coupons given (${stats.couponsUsed ?? 0})`}
+        value={`$${(stats.couponTotal ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+      />
       {(stats.refundTotal ?? 0) > 0 && (
         <CommissionStat
           label="Refunds issued"
@@ -1961,116 +2052,237 @@ function MarkdownBlock({ content }: { content: string }) {
   );
 }
 
-function ScoreCard({ score, label }: { score: number; label: string }) {
-  const tone =
-    score >= 80
-      ? "from-emerald-500/20 to-emerald-500/5 text-emerald-700 border-emerald-500/30"
-      : score >= 60
-      ? "from-blue-500/20 to-blue-500/5 text-blue-700 border-blue-500/30"
-      : score >= 40
-      ? "from-amber-500/20 to-amber-500/5 text-amber-700 border-amber-500/30"
-      : "from-rose-500/20 to-rose-500/5 text-rose-700 border-rose-500/30";
-  return (
-    <div className={cn("rounded-lg border bg-gradient-to-br p-3", tone)}>
-      <div className="flex items-center gap-2">
-        <Gauge className="h-4 w-4" />
-        <span className="text-[10px] font-semibold uppercase tracking-wide">Agent score</span>
-      </div>
-      <div className="mt-1 flex items-baseline gap-2">
-        <div className="text-3xl font-bold tabular-nums leading-none">{score}</div>
-        <div className="text-[10px] text-foreground/60">/ 100</div>
-      </div>
-      {label && <div className="mt-1 text-[11px] text-foreground/80">{label}</div>}
-    </div>
-  );
-}
-
 type DailyRow = {
   key: string; date: Date; total: number;
   cats: Record<Category, number>;
   coupons: number; payments: number; refunds: number; followUps: number;
 };
 
-function DailyTotalsTracker({
+/** Horizontal day switcher — the last 10 days, newest first, with per-day call counts. */
+function DayTabs({
   rows,
   selected,
   onSelect,
-  role,
 }: {
   rows: DailyRow[];
   selected: Date | null;
   onSelect: (d: Date | null) => void;
-  role: Role;
 }) {
+  const days = useMemo(() => {
+    const byKey = new Map(rows.map((r) => [r.key, r]));
+    const out: { key: string; date: Date; total: number }[] = [];
+    for (let i = 0; i < 10; i++) {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - i);
+      const key = toDayKey(d);
+      out.push({ key, date: d, total: byKey.get(key)?.total ?? 0 });
+    }
+    return out;
+  }, [rows]);
   const selKey = selected ? toDayKey(selected) : null;
-  const cols: Category[] = role === "cem"
-    ? ["saved", "closed", "resign", "lead", "cancel_pending", "pending_cancel"]
-    : ["reschedule", "reservice", "payment", "billing_update", "refund", "resign"];
+
   return (
-    <div className="rounded-xl border bg-card shadow-sm">
-      <div className="flex items-center justify-between border-b px-3 py-2">
-        <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          <CalendarDays className="h-3.5 w-3.5 text-primary" /> Daily totals
-          <span className="ml-1.5 text-muted-foreground/60">{rows.length}</span>
-        </h2>
-        <p className="hidden text-[10px] text-muted-foreground sm:block">Click any day to filter the call log above.</p>
+    <div className="flex items-center gap-1 overflow-x-auto border-b px-3 py-1.5">
+      {days.map((d) => {
+        const active = selKey === d.key;
+        return (
+          <button
+            key={d.key}
+            type="button"
+            onClick={() => onSelect(d.date)}
+            className={cn(
+              "flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] transition-colors",
+              active
+                ? "border-primary bg-primary/10 font-semibold text-foreground"
+                : "border-transparent text-muted-foreground hover:bg-muted",
+            )}
+          >
+            <span>{isToday(d.date) ? "Today" : format(d.date, "EEE d")}</span>
+            <span
+              className={cn(
+                "rounded px-1 tabular-nums",
+                d.total > 0 ? "bg-primary/15 text-primary" : "text-muted-foreground/50",
+              )}
+            >
+              {d.total}
+            </span>
+          </button>
+        );
+      })}
+      <button
+        type="button"
+        onClick={() => onSelect(null)}
+        className={cn(
+          "ml-auto shrink-0 rounded-md border px-2 py-1 text-[11px]",
+          selKey === null ? "border-primary bg-primary/10 font-semibold" : "border-transparent text-muted-foreground hover:bg-muted",
+        )}
+      >
+        All days
+      </button>
+    </div>
+  );
+}
+
+/** Compact totals for the day currently open in the log. */
+function DayTotalsRow({ row, role }: { row: DailyRow | null; role: Role }) {
+  const cols: Category[] =
+    role === "cem"
+      ? ["saved", "closed", "resign", "lead", "cancel_pending", "pending_cancel"]
+      : ["reschedule", "reservice", "payment", "billing_update", "refund", "resign"];
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b bg-muted/30 px-3 py-1.5 text-[11px]">
+      <span className="font-semibold uppercase tracking-wide text-muted-foreground">
+        {row?.total ?? 0} call{(row?.total ?? 0) === 1 ? "" : "s"}
+      </span>
+      {cols.map((c) => (
+        <span key={c} className="flex items-center gap-1">
+          <span className={cn("h-1.5 w-1.5 rounded-full", CATEGORY_META[c].dot)} />
+          <span className="text-muted-foreground">{CATEGORY_META[c].label}</span>
+          <span className="font-semibold tabular-nums">{row?.cats[c] ?? 0}</span>
+        </span>
+      ))}
+      <span className="ml-auto flex items-center gap-3">
+        {(row?.coupons ?? 0) > 0 && (
+          <span className="text-purple-600">Coupons ${Math.round(row!.coupons).toLocaleString()}</span>
+        )}
+        {(row?.payments ?? 0) > 0 && (
+          <span className="text-emerald-700">Payments ${Math.round(row!.payments).toLocaleString()}</span>
+        )}
+        {(row?.refunds ?? 0) > 0 && (
+          <span className="text-fuchsia-600">Refunds ${Math.round(row!.refunds).toLocaleString()}</span>
+        )}
+        {(row?.followUps ?? 0) > 0 && <span className="text-amber-700">{row!.followUps} follow-up</span>}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Semi-transparent floating panel pinned to the right edge that cycles through
+ * the agent score, performance highlights, and standout stats.
+ */
+function InsightTicker({
+  score,
+  scoreLabel,
+  overall,
+  loading,
+  empty,
+  stats,
+}: {
+  score: number | null;
+  scoreLabel: string;
+  overall: string;
+  loading: boolean;
+  empty: boolean;
+  stats: { calls: number; saveRate: number; today: number; avgPerDay: number; coupons: number };
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [index, setIndex] = useState(0);
+
+  const slides = useMemo(() => {
+    const out: { title: string; body: string }[] = [];
+    if (score != null) {
+      out.push({ title: "Agent score", body: `**${score}/100** — ${scoreLabel}` });
+    }
+    for (const line of overall
+      .split("\n")
+      .map((l) => l.replace(/^\s*(?:[-*+•]|\d+[.)])\s*/, "").trim())
+      .filter((l) => l.length > 0 && !/^#{1,6}\s/.test(l))
+      .slice(0, 6)) {
+      out.push({ title: "Performance", body: line });
+    }
+    out.push({
+      title: "At a glance",
+      body: `**${stats.today}** calls today · **${stats.calls}** logged total · **${stats.avgPerDay}** avg / active day`,
+    });
+    out.push({
+      title: "At a glance",
+      body: `Save rate **${stats.saveRate}%** · **$${Math.round(stats.coupons).toLocaleString()}** in coupons given`,
+    });
+    return out;
+  }, [score, scoreLabel, overall, stats]);
+
+  useEffect(() => {
+    setIndex(0);
+  }, [overall, score]);
+
+  useEffect(() => {
+    if (paused || collapsed || slides.length < 2) return;
+    const id = setInterval(() => setIndex((i) => (i + 1) % slides.length), 7000);
+    return () => clearInterval(id);
+  }, [paused, collapsed, slides.length]);
+
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={() => setCollapsed(false)}
+        className="fixed right-3 top-1/2 z-20 flex -translate-y-1/2 items-center gap-1.5 rounded-full border bg-card/80 px-3 py-2 text-[11px] font-semibold shadow-lg backdrop-blur transition hover:bg-card"
+      >
+        <Gauge className="h-3.5 w-3.5 text-primary" />
+        {score != null ? `${score}/100` : "Insights"}
+      </button>
+    );
+  }
+
+  const slide = slides[Math.min(index, slides.length - 1)];
+
+  return (
+    <div
+      className="pointer-events-auto fixed right-3 top-1/2 z-20 w-[260px] -translate-y-1/2 rounded-xl border bg-card/70 p-3 shadow-lg backdrop-blur-md transition-colors hover:bg-card/90"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+    >
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <Gauge className="h-3.5 w-3.5 shrink-0 text-primary" />
+        <span className="truncate text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          {empty || loading ? "Your performance" : slide?.title}
+        </span>
+        <button
+          type="button"
+          aria-label="Collapse insights"
+          onClick={() => setCollapsed(true)}
+          className="ml-auto text-muted-foreground hover:text-foreground"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
       </div>
-      {rows.length === 0 ? (
-        <div className="p-6 text-center text-xs text-muted-foreground">No days logged yet.</div>
-      ) : (
-        <div className="max-h-[360px] overflow-auto">
-          <Table>
-            <TableHeader className="sticky top-0 z-[1] bg-card">
-              <TableRow className="text-[10px] uppercase">
-                <TableHead className="h-8">Day</TableHead>
-                <TableHead className="h-8 text-right">Total</TableHead>
-                {cols.map((c) => (
-                  <TableHead key={c} className="h-8 text-right">{CATEGORY_META[c].label}</TableHead>
-                ))}
-                <TableHead className="h-8 text-right">Coupons $</TableHead>
-                {role === "ces" && <TableHead className="h-8 text-right">Payments $</TableHead>}
-                {role === "ces" && <TableHead className="h-8 text-right">Refunds $</TableHead>}
-                <TableHead className="h-8 text-right">Follow-ups</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((r) => {
-                const isSel = selKey === r.key;
-                const isToday = r.key === toDayKey(new Date());
-                return (
-                  <TableRow
-                    key={r.key}
-                    onClick={() => onSelect(isSel ? null : r.date)}
-                    className={cn("cursor-pointer text-xs", isSel && "bg-primary/10 hover:bg-primary/15")}
-                  >
-                    <TableCell className="py-2 font-medium">
-                      <div className="flex items-center gap-2">
-                        <span>{r.date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span>
-                        {isToday && (
-                          <span className="rounded bg-emerald-500/15 px-1 py-0.5 text-[9px] font-semibold uppercase text-emerald-700">Today</span>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="py-2 text-right font-semibold tabular-nums">{r.total}</TableCell>
-                    {cols.map((c) => (
-                      <TableCell key={c} className={cn("py-2 text-right tabular-nums", r.cats[c] > 0 && "font-semibold")} style={r.cats[c] > 0 ? { color: CATEGORY_META[c].hex } : undefined}>
-                        {r.cats[c] || "—"}
-                      </TableCell>
-                    ))}
-                    <TableCell className="py-2 text-right tabular-nums text-purple-600">{r.coupons ? `$${r.coupons.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}</TableCell>
-                    {role === "ces" && <TableCell className="py-2 text-right tabular-nums text-emerald-700">{r.payments ? `$${r.payments.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}</TableCell>}
-                    {role === "ces" && <TableCell className="py-2 text-right tabular-nums text-fuchsia-600">{r.refunds ? `$${r.refunds.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}</TableCell>}
-                    <TableCell className="py-2 text-right tabular-nums text-amber-700">{r.followUps || "—"}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+      <div className="min-h-[64px] text-xs">
+        {empty ? (
+          <p className="text-muted-foreground">Log a call to unlock your score and performance review.</p>
+        ) : loading ? (
+          <p className="text-muted-foreground">Analyzing your calls…</p>
+        ) : (
+          <div key={index} className="animate-fade-in">
+            <MarkdownBlock content={slide?.body ?? ""} />
+          </div>
+        )}
+      </div>
+      {!empty && !loading && slides.length > 1 && (
+        <div className="mt-2 flex items-center gap-1">
+          {slides.map((s, i) => (
+            <button
+              key={i}
+              type="button"
+              aria-label={`Show insight ${i + 1}`}
+              onClick={() => setIndex(i)}
+              className={cn(
+                "h-1.5 w-1.5 rounded-full transition-colors",
+                i === index ? "bg-primary" : "bg-muted-foreground/30 hover:bg-muted-foreground/60",
+              )}
+            />
+          ))}
+          {score != null && (
+            <span className="ml-auto text-[10px] font-semibold tabular-nums text-primary">{score}/100</span>
+          )}
         </div>
       )}
     </div>
   );
 }
+
 
 function ImportDialog({
   open,

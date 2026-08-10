@@ -82,6 +82,24 @@ multiple subscriptions, and each subscription has its own outcome. When the note
 than one property/account, set account_label to a short identifier for the one the outcomes belong to
 (e.g. "Main St", "rental property", "account 2"); otherwise leave it null. Return one outcome entry per
 subscription result.
+COMPLETED vs OFFERED / DECLINED / FUTURE (READ THIS FIRST — most common mistake):
+An outcome is tagged ONLY when the notes show it actually HAPPENED ON THIS CALL. Something that was
+merely offered, quoted, discussed, presented as an option, declined by the customer, or left for the
+future is NOT an outcome. Wording like "offered", "quoted", "presented", "discussed", "let them know
+they can…", "they have the option to…", "if they call back", "within the next X months", "will call
+back", "will pay later", "thinking about it", "declined", "refused", "not interested", "said no",
+"did not accept/agree/sign", "sent for signature / waiting on signature" NEVER produces that tag.
+In those cases record what actually happened instead — usually the real retention result
+("cancel_pending", "pending_cancel", "closed") or "inquiry" if nothing changed on the account.
+Concrete rules:
+- "Offered 50% off, customer declined and cancelled" -> ["closed"] (no coupon applied, no save).
+- "Told the customer they can call back within 6 months to reactivate" -> NOT a reactivation. That is
+  a future option only. Tag the real result of the call (e.g. "closed" or "inquiry").
+- "Sent the agreement, waiting on signature" -> NOT a resign. Set follow_up_needed = true instead.
+- "Customer will pay next week" -> NOT a payment. It is an "inquiry" plus a follow-up note.
+- A discount that was quoted but not applied -> leave coupon fields null.
+When you are unsure whether something was completed, do NOT tag it — set needs_review = true.
+
 CRITICAL: EVERY call gets at least one real outcome. NEVER return "other". If nothing else fits,
 the call is an "inquiry" (customer had questions / doubts / wanted clarification). Pick EVERY
 applicable outcome from the list below — multiple outcomes per call are normal and expected.
@@ -129,10 +147,14 @@ Categories — pick every outcome that applies (the same call can have several):
   explicitly said otherwise. If the customer only agreed to ONE more service and then wants to stop, that
   is "cancel_pending", NOT a save.
 - "closed": account/subscription was closed, cancelled, or frozen (same retention result).
-- "resign": customer signed a new agreement or renewed with new terms.
-  Only counts for commission when the agreement was actually signed.
-- "reactivation": a previously closed/frozen/cancelled subscription was reopened. Manager authority, and
-  only allowed within 6 months of the day it was closed/frozen. If the notes show a longer gap, still use
+- "resign": the customer SIGNED a new agreement (or accepted new terms that were signed) on this call.
+  Proof required: "signed", "agreement signed", "e-sign completed", "resigned at $X", "accepted and
+  signed the new agreement". An agreement that was only sent, offered, quoted, or is awaiting a
+  signature is NOT a resign — leave the tag off and set follow_up_needed = true.
+- "reactivation": a previously closed/frozen/cancelled subscription was REOPENED ON THIS CALL. Manager
+  authority, and only allowed within 6 months of the day it was closed/frozen. Telling a customer they
+  may reactivate later (e.g. "you can call back within 6 months and reactivate") is a future option, NOT
+  a reactivation — never tag it. If a real reactivation happened outside the 6-month window, still use
   "reactivation" and mention the gap in the summary.
 - "lead": call was sent to Inside Sales for new subscription, upsell, or new service.
   Set lead_sold = true only if the notes say the lead actually sold.
@@ -140,8 +162,10 @@ Categories — pick every outcome that applies (the same call can have several):
 - "pending_cancel": the account was flagged as pending cancel on the retention doc BEFORE this call, and the agent is following up to offer options. If the notes mention "from the doc", "the doc", "retention doc", or list the customer as an existing pending cancel, use this — NOT cancel_pending.
 - "reschedule": a service was rescheduled or scheduled (new appointment date).
 - "reservice": a free re-service was scheduled between regular services (no charge to customer).
-- "payment": a payment / outstanding balance was taken on the call. Populate payment_amount with the dollar amount collected (numeric).
-- "payment_promise": the customer did not pay on the call but committed to call back / pay later.
+- "payment": a payment / outstanding balance was actually TAKEN on the call (card ran, balance cleared).
+  Populate payment_amount with the dollar amount collected (numeric). A promise to pay later is NOT a
+  payment: leave the tag off, use "inquiry", and set follow_up_needed = true with a short note.
+- "payment_promise": FORBIDDEN. Never return this value (see the payment rule above).
 - "billing_update": billing information (card, address, autopay) was updated. If a payment was ALSO taken, include BOTH "billing_update" and "payment".
 - FROZEN / PAUSED accounts: a frozen, paused, or seasonal-hold account is the SAME retention result as a
   close. Return "closed" for it (never "freeze") and mention the freeze in the summary.
@@ -164,6 +188,7 @@ Return every outcome in the "categories" array, in the order they occurred. Also
 - Agent saves the customer AND signs a new agreement on the same call. -> categories: ["saved","resign"], category: "resign" (resign leads if it happened; otherwise "saved"). Both count for commission.
 - Save + lead sent to Inside Sales for additional service -> categories: ["saved","lead"].
 - Billing card updated + payment of $185 taken on outstanding balance -> categories: ["billing_update","payment"], payment_amount: 185.
+- Offered a resign at $119, customer wants to think about it -> categories: ["inquiry"], no resign tag, follow_up_needed: true.
 - Reschedule + free re-service scheduled -> categories: ["reschedule","reservice"].
 - Pending cancel from the doc, agent froze the account -> categories: ["pending_cancel","closed"] (frozen = closed).
 - Customer refunded $60 and rescheduled -> categories: ["refund","reschedule"], refund_amount: 60.
@@ -271,11 +296,40 @@ const SERVICE_MAP: [RegExp, string][] = [
   [/\bpp\b/i, "Protection Program"],
 ];
 
+// Wording that means an outcome was only OFFERED, declined, or left for the future —
+// never a completed outcome. A keyword sitting in such a clause must not become a tag.
+const OFFERED_OR_FUTURE =
+  /\b(offer(s|ed|ing)?|quote[ds]?|quoting|propos(e|ed|al)|present(ed)?|mention(ed)?|explain(ed)?|advis(e|ed)|inform(ed)?|let (them|him|her) know|told (them|him|her)|option(s)? to|eligible to|able to|can (call|reach|come|do|get|reactivate|resume|restart)|could|may|might|if (they|he|she|the cx)|should (they|he|she)|whenever|any ?time|in the future|within (the )?(next )?\d+\s*(day|week|month)|next (\d+\s*)?months?|will (call|reach|pay|think|let|get back)|going to (call|think|pay)|plans? to|thinking (about|it over)|consider(ing)?|declin(e|ed|es)|refus(e|ed|es)|reject(ed)?|not interested|no interest|said no|would ?n[o']?t|did ?n[o']?t (accept|agree|sign|want|take)|does ?n[o']?t want|turned (it )?down|pending (signature|approval)|waiting (on|for) (the )?(signature|signed|approval|callback)|unsigned|not (yet )?signed|no answer|left (a )?(voicemail|vm|message)|nva\b|no voice ?mail)\b/i;
+
+// Split notes into clauses so an "offered X" phrase can't taint a nearby completed outcome.
+function clauses(notes: string): string[] {
+  return notes
+    .split(/(?:[.!?;\n,]|\bbut\b|\bhowever\b|\bthen\b|\band then\b)+/i)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
 // Deterministic keyword classifier — the safety net that guarantees a call is never lost.
-// Returns the outcomes it could prove from explicit words, plus whether anything matched at all.
+// Only outcomes that actually HAPPENED on the call are returned.
 function keywordCategories(notes: string): { cats: Analysis["category"][]; matched: boolean } {
   const cats: Analysis["category"][] = [];
+  const parts = clauses(notes);
+  // Refusal wording. A refusal kills the OFFERED thing, but the cancellation that follows it
+  // ("offered 50% off, customer declined and cancelled") really did happen.
+  const REFUSED =
+    /\b(declin(e|ed|es)|refus(e|ed|es)|reject(ed)?|not interested|no interest|said no|would ?n[o']?t|turned (it )?down|did ?n[o']?t (accept|agree|want|take))\b/i;
   const has = (re: RegExp) => re.test(notes);
+  // True only when the keyword appears in a clause that is not an offer / refusal / future plan.
+  const did = (re: RegExp) => parts.some((p) => re.test(p) && !OFFERED_OR_FUTURE.test(p));
+  // Same, but a refusal in the clause is allowed — used for the losing outcomes.
+  const didAfterRefusal = (re: RegExp) =>
+    parts.some((p) => {
+      if (!re.test(p)) return false;
+      if (!OFFERED_OR_FUTURE.test(p)) return true;
+      // Strip the refusal words and re-check: if the only "offer/future" signal was the refusal
+      // itself, the outcome still happened.
+      return REFUSED.test(p) && !OFFERED_OR_FUTURE.test(p.replace(new RegExp(REFUSED.source, "gi"), " "));
+    });
   const add = (c: Analysis["category"]) => {
     if (!cats.includes(c)) cats.push(c);
   };
@@ -287,22 +341,36 @@ function keywordCategories(notes: string): { cats: Analysis["category"][]; match
   if (pendingCancel) add("pending_cancel");
 
   // A negated cancellation is a save, not a close.
-  const keptService = has(/\bnot\s+cancel\w*|\bdid\s?n[o']?t\s+cancel|\bkept\s+(the\s+)?(service|plan|account)|\bdecided to (stay|keep|continue)|\bwill (stay|continue|keep)\b/i);
-  if (keptService || has(/\bsaved?\b|\bsave[sd]?\b|\bretain(ed|ing)?\b|\bretention save\b/i)) add("saved");
+  const keptService = has(/\bnot\s+cancel\w*|\bdid\s?n[o']?t\s+cancel|\bkept\s+(the\s+)?(service|plan|account)|\bdecided to (stay|keep|continue)|\bagreed to (stay|keep|continue|\d+ more)/i);
+  if (keptService || did(/\bsaved?\b|\bsave[sd]\b|\bretain(ed|ing)\b|\bretention save\b/i)) add("saved");
 
-  if (has(/\bre-?sign(ed|ing|s)?\b|\bnew agreement\b|\brenew(ed|al)?\b|reduc\w*\s+(price\s+)?to\b|\bprice reduction\b/i)) add("resign");
-  if (has(/\blead\b|\bleads\b|inside sales|\bsent to sales\b|\bIS\s+lead\b/i)) add("lead");
-  if (has(/\breactivat/i)) add("reactivation");
+  // Resign only counts when the agreement was actually signed / accepted on the call.
+  const resignSubject = did(/\bre-?sign(ed|ing|s)?\b|\bnew agreement\b|\brenew(ed|al)?\b|reduc\w*\s+(price\s+)?to\b|\bprice reduction\b/i);
+  const signedProof = did(/\bsigned\b|\bre-?signed\b|\be-?sign(ed|ature)? (complete|done|received|back)\b|\bagreement (was )?signed\b|\baccepted (the )?(new )?agreement\b|\bsigned (the )?(new )?agreement\b|\bresign(ed)? (at|for)\b/i);
+  if (resignSubject && signedProof) add("resign");
+
+  if (did(/\blead\b|\bleads\b|inside sales|\bsent to sales\b|\bIS\s+lead\b/i)) add("lead");
+  // Reactivation counts only when the subscription was reopened on THIS call — not when the
+  // customer was merely told they can reactivate later.
+  if (did(/\breactivat(ed|ing|ion)\b/i)) add("reactivation");
   // Frozen is the same retention result as a close.
-  if (has(/\bfreez\w*|\bfrozen\b|\bseasonal (hold|pause)\b|\bpaused\b/i)) add("closed");
-  if (!keptService && has(/\bclos(e|ed|ing|ure)\b|\bcancell?(ed|ation)\b|\bterminated\b/i) && !cancelPending && !pendingCancel) add("closed");
-  if (has(/\bre-?schedul\w*|\bpush(ed)? (the )?(service|appointment|appt)\b|\bmov(e|ed) (the )?(service|appointment|appt)\b/i)) add("reschedule");
-  if (has(/\bre-?service\b|\bre-?svc\b|\bRS\b/)) add("reservice");
-  if (has(/\brefund\w*/i)) add("refund");
-  if (has(/\bpayment promise\w*|\bpromised to pay\b|\bwill (call back|pay) (to pay|later|tomorrow|on)\b|\bpay later\b/i)) add("payment_promise");
-  if (has(/\bpayment\b|\bpaid\b|\bcard ran\b|\bran (the )?card\b|\bcollected\b|\bbalance (paid|cleared)\b|\btook (a )?payment\b/i)) add("payment");
+  // A close/freeze mentioned only to describe what is being reopened is not a new close.
+  const reactivated = cats.includes("reactivation");
+  if (!reactivated && didAfterRefusal(/\bfroze\b|\bfroze[n]?\b|\bfreez(e|ing)\b|\bseasonal (hold|pause)\b|\bpaused\b/i)) add("closed");
+  if (
+    !keptService &&
+    !reactivated &&
+    didAfterRefusal(/\bclos(e|ed|ing|ure)\b|\bcancell?(ed|ation)\b|\bcancell?ing\b|\bterminated\b/i) &&
+    !cancelPending &&
+    !pendingCancel
+  )
+    add("closed");
+  if (did(/\bre-?schedul(e|ed|ing)\b|\bpush(ed)? (the )?(service|appointment|appt)\b|\bmov(e|ed) (the )?(service|appointment|appt)\b/i)) add("reschedule");
+  if (did(/\bre-?service\b|\bre-?svc\b|\bRS\b/)) add("reservice");
+  if (did(/\brefund(ed|s)?\b/i)) add("refund");
+  if (did(/\bpayment\b|\bpaid\b|\bcard ran\b|\bran (the )?card\b|\bcollected\b|\bbalance (paid|cleared)\b|\btook (a )?payment\b/i)) add("payment");
   if (has(/back on schedule|put back on (the )?schedule|transferred from the doc/i)) add("back_on_schedule");
-  if (has(/\bbilling (info|information|update|address)\b|\bupdated (the )?card\b|\bnew card\b|\bautopay\b|\bcard on file\b/i)) add("billing_update");
+  if (did(/\bbilling (info|information|update|address)\b|\bupdated (the )?card\b|\bnew card\b|\bautopay\b|\bcard on file\b/i)) add("billing_update");
   if (has(/escalat\w*\s+to\s+(a\s+)?(cem|manager|retention manager)|\bto cem\b|\bhanded (it |the account )?to (a )?cem\b/i)) add("escalated_to_cem");
   if (has(/\bescalat\w*|transferred to (the )?(branch|fm|bm|field manager|branch manager)/i)) add("escalation");
   if (has(/\binquir\w*|\bquestion\w*|\bdoubts?\b|\bclarif\w*|\basked about\b|\bcomplain\w*/i)) add("inquiry");
@@ -339,6 +407,8 @@ function normalize(a: Analysis): Analysis {
   const mapped: Analysis["category"][] = [];
   for (const c of raw) {
     if (c === "other") { if (!mapped.includes("inquiry")) mapped.push("inquiry"); continue; }
+    // "Payment promised" is retired — a promise to pay is an inquiry plus a follow-up.
+    if (c === "payment_promise") { if (!mapped.includes("inquiry")) mapped.push("inquiry"); continue; }
     // Frozen folds into closed; don't double-count when the list already had a close.
     if (c === "freeze") { if (!hadClosed) mapped.push("closed"); continue; }
     mapped.push(c);
