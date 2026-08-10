@@ -3,7 +3,8 @@ import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  analyzeAndSaveCallLog,
+  analyzeCallNotes,
+  saveDraftCallLog,
   bulkImportCallLogs,
   createManualCallLog,
   deleteCallLog,
@@ -122,7 +123,17 @@ const ALL_CATEGORIES: Category[] = [
 
 function logCategories(l: { categories?: string[] | null; category: string }): Category[] {
   const arr = Array.isArray(l.categories) && l.categories.length > 0 ? l.categories : [l.category];
-  return arr.filter((c): c is Category => (ALL_CATEGORIES as string[]).includes(c));
+  // A frozen account is the same retention result as a close — fold legacy "freeze" tags in,
+  // without double-counting when the log already carries a close.
+  const mapped = arr.map((c) => (c === "freeze" ? "closed" : c));
+  const out: Category[] = [];
+  arr.forEach((orig, i) => {
+    const c = mapped[i];
+    if (!(ALL_CATEGORIES as string[]).includes(c)) return;
+    if (orig === "freeze" && arr.includes("closed")) return;
+    out.push(c as Category);
+  });
+  return out;
 }
 
 function toDayKey(d: Date): string {
