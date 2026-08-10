@@ -2052,30 +2052,6 @@ function MarkdownBlock({ content }: { content: string }) {
   );
 }
 
-function ScoreCard({ score, label }: { score: number; label: string }) {
-  const tone =
-    score >= 80
-      ? "from-emerald-500/20 to-emerald-500/5 text-emerald-700 border-emerald-500/30"
-      : score >= 60
-      ? "from-blue-500/20 to-blue-500/5 text-blue-700 border-blue-500/30"
-      : score >= 40
-      ? "from-amber-500/20 to-amber-500/5 text-amber-700 border-amber-500/30"
-      : "from-rose-500/20 to-rose-500/5 text-rose-700 border-rose-500/30";
-  return (
-    <div className={cn("rounded-lg border bg-gradient-to-br p-3", tone)}>
-      <div className="flex items-center gap-2">
-        <Gauge className="h-4 w-4" />
-        <span className="text-[10px] font-semibold uppercase tracking-wide">Agent score</span>
-      </div>
-      <div className="mt-1 flex items-baseline gap-2">
-        <div className="text-3xl font-bold tabular-nums leading-none">{score}</div>
-        <div className="text-[10px] text-foreground/60">/ 100</div>
-      </div>
-      {label && <div className="mt-1 text-[11px] text-foreground/80">{label}</div>}
-    </div>
-  );
-}
-
 type DailyRow = {
   key: string; date: Date; total: number;
   cats: Record<Category, number>;
