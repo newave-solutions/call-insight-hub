@@ -304,7 +304,7 @@ const OFFERED_OR_FUTURE =
 // Split notes into clauses so an "offered X" phrase can't taint a nearby completed outcome.
 function clauses(notes: string): string[] {
   return notes
-    .split(/(?:[.!?;\n]|,\s*(?=but\b|however\b|so\b)|\bbut\b|\bhowever\b)+/i)
+    .split(/(?:[.!?;\n,]|\bbut\b|\bhowever\b|\bthen\b|\band then\b)+/i)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 }
