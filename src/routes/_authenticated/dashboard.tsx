@@ -1366,15 +1366,6 @@ function DailyBriefing({ content, loading, empty }: { content: string; loading: 
   );
 }
 
-function LegacyChartCard({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border bg-card p-3 shadow-sm">
-      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</div>
-      {children}
-    </div>
-  );
-}
-
 function Legend({ items }: { items: [string, string][] }) {
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
