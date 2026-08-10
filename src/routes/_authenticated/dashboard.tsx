@@ -862,7 +862,7 @@ function Dashboard() {
                 No calls match. Paste a summary above to log one.
               </div>
             ) : (
-              <div className="max-h-[560px] overflow-auto">
+              <div className="max-h-[420px] overflow-auto">
                 <Table>
                   <TableHeader className="sticky top-0 z-[1] bg-card">
                     <TableRow className="text-[10px] uppercase">
@@ -915,13 +915,6 @@ function Dashboard() {
                   <ScoreCard score={insightsQuery.data.score} label={insightsQuery.data.scoreLabel} />
                 )}
                 <div>
-                  <div className="mb-1.5 flex items-center gap-1.5">
-                    <Sparkles className="h-3.5 w-3.5 text-primary" />
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Daily briefing</h3>
-                  </div>
-                  <MarkdownBlock content={insightsQuery.data?.daily ?? ""} />
-                </div>
-                <div className="border-t pt-3">
                   <div className="mb-1.5 flex items-center gap-1.5">
                     <TrendingUp className="h-3.5 w-3.5 text-primary" />
                     <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overall performance</h3>
@@ -1293,6 +1286,87 @@ function AuthorityBadge({
 }
 
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border bg-card p-3 shadow-sm">
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</div>
+      {children}
+    </div>
+  );
+}
+
+/** Rotating daily-briefing highlights with a cross-fade transition. */
+function DailyBriefing({ content, loading, empty }: { content: string; loading: boolean; empty: boolean }) {
+  const highlights = useMemo(
+    () =>
+      content
+        .split("\n")
+        .map((l) => l.replace(/^\s*(?:[-*+•]|\d+[.)])\s*/, "").trim())
+        .filter((l) => l.length > 0 && !/^#{1,6}\s/.test(l)),
+    [content],
+  );
+  const [index, setIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+
+  useEffect(() => {
+    setIndex(0);
+  }, [content]);
+
+  useEffect(() => {
+    if (paused || highlights.length < 2) return;
+    const id = setInterval(() => setIndex((i) => (i + 1) % highlights.length), 6000);
+    return () => clearInterval(id);
+  }, [paused, highlights.length]);
+
+  const active = highlights[Math.min(index, Math.max(0, highlights.length - 1))] ?? "";
+
+  return (
+    <div
+      className="rounded-xl border bg-card p-3 shadow-sm"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+    >
+      <div className="mb-1.5 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" />
+          <h3 className="truncate text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Daily briefing
+          </h3>
+        </div>
+        {highlights.length > 1 && (
+          <div className="flex shrink-0 items-center gap-1">
+            {highlights.map((h, i) => (
+              <button
+                key={i}
+                type="button"
+                aria-label={`Show highlight ${i + 1}`}
+                onClick={() => setIndex(i)}
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full transition-colors",
+                  i === index ? "bg-primary" : "bg-muted-foreground/30 hover:bg-muted-foreground/60",
+                )}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="min-h-[38px]">
+        {empty ? (
+          <p className="text-xs text-muted-foreground">Log at least one call to see your daily briefing.</p>
+        ) : loading ? (
+          <p className="text-xs text-muted-foreground">Analyzing your calls…</p>
+        ) : highlights.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No briefing highlights yet.</p>
+        ) : (
+          <div key={index} className="animate-fade-in">
+            <MarkdownBlock content={active} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LegacyChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border bg-card p-3 shadow-sm">
       <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</div>
