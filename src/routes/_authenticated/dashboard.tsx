@@ -44,15 +44,18 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  ComposedChart,
   Line,
   LineChart,
   Pie,
   PieChart,
+  ReferenceLine,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
+  ZAxis,
 } from "recharts";
 import { toast } from "sonner";
 import {
@@ -218,7 +221,8 @@ function Dashboard() {
   const [callDate, setCallDate] = useState<Date>(new Date());
   const [dateOpen, setDateOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [dayFilter, setDayFilter] = useState<Date | null>(null);
+  // The log opens on today; the day tabs / calendar move it, "All days" clears it.
+  const [dayFilter, setDayFilter] = useState<Date | null>(() => new Date());
   const [dayFilterOpen, setDayFilterOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
