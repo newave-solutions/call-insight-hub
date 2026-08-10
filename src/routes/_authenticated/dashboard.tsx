@@ -884,12 +884,12 @@ function Dashboard() {
           />
         </section>
 
-        {/* Table + insights */}
-        <section className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+        {/* Call log — one day at a time */}
+        <section className="mt-3">
           <div className="rounded-xl border bg-card shadow-sm">
             <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
               <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Call log
+                {dayFilter ? (isToday(dayFilter) ? "Today's calls" : format(dayFilter, "EEE, MMM d")) : "All calls"}
                 <span className="ml-1.5 text-muted-foreground/60">{filtered.length}</span>
               </h2>
               <div className="flex flex-1 items-center gap-2">
@@ -946,24 +946,34 @@ function Dashboard() {
                     className="h-8 pl-7 text-xs"
                   />
                 </div>
-                {(filter !== "all" || query || dayFilter) && (
+                {(filter !== "all" || query || !dayFilter || !isToday(dayFilter)) && (
                   <button
                     className="text-[11px] text-muted-foreground hover:text-foreground"
                     onClick={() => {
                       setFilter("all");
                       setQuery("");
-                      setDayFilter(null);
+                      setDayFilter(new Date());
                     }}
                   >
-                    Clear
+                    Reset to today
                   </button>
                 )}
               </div>
             </div>
 
+            {/* Day tabs — last 10 days, with each day's call count */}
+            <DayTabs
+              rows={dailyTotals}
+              selected={dayFilter}
+              onSelect={(d) => setDayFilter(d)}
+            />
+
+            {/* Totals for the selected day */}
+            {dayFilter && <DayTotalsRow row={dailyTotals.find((r) => r.key === toDayKey(dayFilter)) ?? null} role={role} />}
+
             {filtered.length === 0 ? (
               <div className="p-8 text-center text-xs text-muted-foreground">
-                No calls match. Paste a summary above to log one.
+                {dayFilter ? "No calls logged for this day yet." : "No calls match. Paste a summary above to log one."}
               </div>
             ) : (
               <div className="max-h-[420px] overflow-auto">
