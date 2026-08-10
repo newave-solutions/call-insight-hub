@@ -1,0 +1,1 @@
+ALTER TABLE public.call_logs ADD COLUMN IF NOT EXISTS needs_review boolean NOT NULL DEFAULT false;

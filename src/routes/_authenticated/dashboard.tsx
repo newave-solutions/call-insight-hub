@@ -3,7 +3,8 @@ import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  analyzeAndSaveCallLog,
+  analyzeCallNotes,
+  saveDraftCallLog,
   bulkImportCallLogs,
   createManualCallLog,
   deleteCallLog,
@@ -84,6 +85,7 @@ import {
   Wrench,
   CreditCard,
   UserCog,
+  AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -116,13 +118,23 @@ const ALL_CATEGORIES: Category[] = [
   "saved", "closed", "resign", "reactivation", "lead",
   "cancel_pending", "pending_cancel",
   "reschedule", "reservice", "payment", "payment_promise", "billing_update",
-  "freeze", "refund", "back_on_schedule", "inquiry", "escalation",
+  "refund", "back_on_schedule", "inquiry", "escalation",
   "escalated_to_cem", "other",
 ];
 
 function logCategories(l: { categories?: string[] | null; category: string }): Category[] {
   const arr = Array.isArray(l.categories) && l.categories.length > 0 ? l.categories : [l.category];
-  return arr.filter((c): c is Category => (ALL_CATEGORIES as string[]).includes(c));
+  // A frozen account is the same retention result as a close — fold legacy "freeze" tags in,
+  // without double-counting when the log already carries a close.
+  const mapped = arr.map((c) => (c === "freeze" ? "closed" : c));
+  const out: Category[] = [];
+  arr.forEach((orig, i) => {
+    const c = mapped[i];
+    if (!(ALL_CATEGORIES as string[]).includes(c)) return;
+    if (orig === "freeze" && arr.includes("closed")) return;
+    out.push(c as Category);
+  });
+  return out;
 }
 
 function toDayKey(d: Date): string {
@@ -131,6 +143,9 @@ function toDayKey(d: Date): string {
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
+
+// The analysis payload returned by analyzeCallNotes, before it is persisted.
+type Draft = Awaited<ReturnType<typeof analyzeCallNotes>>;
 
 const CATEGORY_META: Record<
   Category,
@@ -172,7 +187,8 @@ const CHART_CATEGORIES_BY_ROLE: Record<Role, Category[]> = {
 function Dashboard() {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const analyze = useServerFn(analyzeAndSaveCallLog);
+  const analyzeFn = useServerFn(analyzeCallNotes);
+  const saveDraftFn = useServerFn(saveDraftCallLog);
   const del = useServerFn(deleteCallLog);
   const listFn = useServerFn(listCallLogs);
   const insightsFn = useServerFn(generateInsights);
@@ -213,10 +229,25 @@ function Dashboard() {
     refetchInterval: 15000,
   });
 
+  // Analysis first: if the outcome is unclear, ask the user to confirm tags before anything is saved.
+  const [confirmDraft, setConfirmDraft] = useState<{
+    notes: string;
+    callDate: string;
+    draft: Draft;
+  } | null>(null);
+
   const analyzeMut = useMutation({
-    mutationFn: (input: { notes: string; callDate: string }) =>
-      analyze({ data: { notes: input.notes, callDate: input.callDate } }),
-    onSuccess: () => {
+    mutationFn: async (input: { notes: string; callDate: string }) => {
+      const draft = await analyzeFn({ data: { notes: input.notes } });
+      if (draft.needs_review) return { pending: { ...input, draft } } as const;
+      await saveDraftFn({ data: { notes: input.notes, callDate: input.callDate, draft } });
+      return { pending: null } as const;
+    },
+    onSuccess: (res) => {
+      if (res.pending) {
+        setConfirmDraft(res.pending);
+        return;
+      }
       setNotes("");
       setCallDate(new Date());
       qc.invalidateQueries({ queryKey: ["call_logs"] });
@@ -227,6 +258,21 @@ function Dashboard() {
     onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to analyze"),
   });
 
+  const confirmSaveMut = useMutation({
+    mutationFn: (input: { notes: string; callDate: string; draft: Draft }) =>
+      saveDraftFn({ data: { notes: input.notes, callDate: input.callDate, draft: { ...input.draft, needs_review: false } } }),
+    onSuccess: () => {
+      setConfirmDraft(null);
+      setNotes("");
+      setCallDate(new Date());
+      qc.invalidateQueries({ queryKey: ["call_logs"] });
+      qc.invalidateQueries({ queryKey: ["insights"] });
+      toast.success("Call logged");
+      textareaRef.current?.focus();
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Save failed"),
+  });
+
   const bulkMut = useMutation({
     mutationFn: (items: ParsedEntry[]) => bulkImportFn({ data: { items } }),
     onSuccess: (res) => {
@@ -234,9 +280,18 @@ function Dashboard() {
       qc.invalidateQueries({ queryKey: ["insights"] });
       toast.success(`Imported ${res.inserted} call${res.inserted === 1 ? "" : "s"}`);
       setUploadOpen(false);
+      if (res.review.length > 0) {
+        setReviewQueue(res.review.map((r) => r.id));
+        toast.warning(
+          `${res.review.length} call${res.review.length === 1 ? "" : "s"} need outcome confirmation`,
+        );
+      }
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Import failed"),
   });
+
+  // Imported rows that couldn't be classified — confirmed one at a time.
+  const [reviewQueue, setReviewQueue] = useState<string[]>([]);
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => del({ data: { id } }),
@@ -284,8 +339,6 @@ function Dashboard() {
       const lcats = logCategories(l);
       for (const c of lcats) {
         t[c] += 1;
-        // A frozen subscription is the same retention result as a close.
-        if (c === "freeze") t.closed += 1;
       }
       if (l.lead_sold) t.leadsSold += 1;
       if (l.escalated_to_cem) t.escalatedToCem += 1;
@@ -348,7 +401,7 @@ function Dashboard() {
       if (!e) continue;
       for (const c of logCategories(l)) {
         if (c === "saved") e.saved += 1;
-        else if (c === "closed" || c === "freeze") e.closed += 1;
+        else if (c === "closed") e.closed += 1;
         else if (c === "resign") e.resign += 1;
       }
       if (l.coupon_amount) e.coupons += Number(l.coupon_amount);
@@ -384,7 +437,6 @@ function Dashboard() {
       e.total += 1;
       for (const c of logCategories(l)) {
         e.cats[c] += 1;
-        if (c === "freeze") e.cats.closed += 1;
       }
       if (l.coupon_amount) e.coupons += Number(l.coupon_amount);
       if (l.payment_amount) e.payments += Number(l.payment_amount);
@@ -848,7 +900,128 @@ function Dashboard() {
           saving={updateMut.isPending}
         />
       )}
+
+      {/* Composer: unclassifiable notes must be tagged by the user before anything is saved. */}
+      {confirmDraft && (
+        <ConfirmOutcomeDialog
+          notes={confirmDraft.notes}
+          summary={confirmDraft.draft.summary ?? null}
+          customerName={confirmDraft.draft.customer_name ?? null}
+          customerId={confirmDraft.draft.customer_id ?? null}
+          serviceName={confirmDraft.draft.service_name ?? null}
+          price={confirmDraft.draft.price_per_service ?? null}
+          initial={(confirmDraft.draft.categories as Category[] | null) ?? []}
+          saving={confirmSaveMut.isPending}
+          onCancel={() => setConfirmDraft(null)}
+          onConfirm={(cats) =>
+            confirmSaveMut.mutate({
+              notes: confirmDraft.notes,
+              callDate: confirmDraft.callDate,
+              draft: { ...confirmDraft.draft, categories: cats, category: cats[0] },
+            })
+          }
+        />
+      )}
+
+      {/* Imported rows the parser could not classify — walked one at a time. */}
+      {reviewQueue.length > 0 && (() => {
+        const row = logs.find((l) => l.id === reviewQueue[0]);
+        if (!row) return null;
+        const advance = () => setReviewQueue((q) => q.slice(1));
+        return (
+          <ConfirmOutcomeDialog
+            key={row.id}
+            notes={row.raw_notes}
+            summary={row.summary}
+            customerName={row.customer_name}
+            customerId={row.customer_id}
+            serviceName={row.service_name}
+            price={row.price_per_service}
+            initial={logCategories(row)}
+            saving={updateMut.isPending}
+            remaining={reviewQueue.length}
+            onCancel={advance}
+            onConfirm={async (cats) => {
+              await updateMut.mutateAsync({
+                id: row.id,
+                patch: { categories: cats, category: cats[0], needs_review: false },
+              });
+              advance();
+            }}
+          />
+        );
+      })()}
     </div>
+  );
+}
+
+/** Popup that forces a human decision when a call could not be categorized. */
+function ConfirmOutcomeDialog({
+  notes,
+  summary,
+  customerName,
+  customerId,
+  serviceName,
+  price,
+  initial,
+  saving,
+  remaining,
+  onCancel,
+  onConfirm,
+}: {
+  notes: string;
+  summary: string | null;
+  customerName: string | null;
+  customerId: string | null;
+  serviceName: string | null;
+  price: number | null;
+  initial: Category[];
+  saving: boolean;
+  remaining?: number;
+  onCancel: () => void;
+  onConfirm: (cats: Category[]) => void;
+}) {
+  const [cats, setCats] = useState<Category[]>(initial.filter((c) => c !== "other"));
+  return (
+    <Dialog open onOpenChange={(o) => !o && onCancel()}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-500" />
+            Confirm the outcome
+            {remaining && remaining > 1 ? (
+              <span className="text-xs font-normal text-muted-foreground">({remaining} left)</span>
+            ) : null}
+          </DialogTitle>
+          <DialogDescription>
+            These notes couldn't be classified automatically. Pick every outcome that applies — nothing is
+            counted until you confirm.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="rounded-lg border bg-muted/40 p-3 text-xs">
+            <div className="flex flex-wrap gap-x-3 gap-y-1 font-medium">
+              <span>{customerName || "Unnamed customer"}</span>
+              {customerId && <span className="font-mono text-muted-foreground">#{customerId}</span>}
+              {serviceName && <span className="text-muted-foreground">{serviceName}</span>}
+              {price != null && <span className="text-muted-foreground">${price}/svc</span>}
+            </div>
+            <p className="mt-1.5 line-clamp-4 text-muted-foreground">{summary || notes}</p>
+          </div>
+          <OutcomeEditor value={cats} onChange={setCats} />
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={onCancel} disabled={saving}>
+            {remaining ? "Skip for now" : "Cancel"}
+          </Button>
+          <Button onClick={() => onConfirm(cats)} disabled={saving || cats.length === 0}>
+            {saving ? "Saving…" : "Confirm & log"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1129,6 +1302,11 @@ function LogRow({ log, role, onSelect, onDelete }: { log: Log; role: Role; onSel
           {log.lead_sold && (
             <span className="rounded-md bg-emerald-500/10 px-1 py-0.5 text-[9px] font-bold uppercase text-emerald-700">sold</span>
           )}
+          {log.needs_review && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-1 py-0.5 text-[9px] font-bold uppercase text-amber-700">
+              <AlertTriangle className="h-2.5 w-2.5" /> review
+            </span>
+          )}
           <AuthorityBadge role={role} log={log} />
         </div>
       </TableCell>
@@ -1316,6 +1494,28 @@ function DetailDrawerInner({
 
   async function save() {
     const cats = form.categories.length > 0 ? form.categories : [form.category as Category];
+    return saveWith(cats);
+  }
+
+  const savedCats = logCategories(log);
+  const outcomesDirty =
+    form.categories.length !== savedCats.length ||
+    form.categories.some((c, i) => c !== savedCats[i]);
+
+  // Quick path: change only the outcome tags, straight from the drawer.
+  async function saveOutcomes() {
+    const cats = form.categories;
+    if (cats.length === 0) return;
+    await onSave({
+      categories: cats,
+      category: cats[0],
+      escalated_to_cem: cats.includes("escalated_to_cem"),
+      lead_sold: form.lead_sold && cats.includes("lead"),
+      needs_review: false,
+    });
+  }
+
+  async function saveWith(cats: Category[]) {
     const patch: Record<string, unknown> = {
       customer_name: form.customer_name.trim() || null,
       customer_id: form.customer_id.trim() || null,
@@ -1337,6 +1537,7 @@ function DetailDrawerInner({
       follow_up_notes: form.follow_up_needed ? form.follow_up_notes.trim() || null : null,
       sentiment: form.sentiment.trim() || null,
       call_date: new Date(form.call_date).toISOString(),
+      needs_review: false,
     };
     await onSave(patch);
     setEditing(false);
@@ -1388,6 +1589,30 @@ function DetailDrawerInner({
             </button>
           </div>
         </div>
+
+        {log.needs_review && !editing && (
+          <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>This call couldn't be categorized automatically. Confirm its outcomes below.</span>
+          </div>
+        )}
+
+        {!editing && (
+          <div className="mt-4 rounded-lg border p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Outcomes</h3>
+              {outcomesDirty && (
+                <Button size="sm" className="h-7 text-xs" disabled={saving || form.categories.length === 0} onClick={saveOutcomes}>
+                  {saving ? "Saving…" : "Save outcomes"}
+                </Button>
+              )}
+            </div>
+            <OutcomeEditor value={form.categories} onChange={(next) => set("categories", next)} />
+            <p className="mt-2 text-[10px] text-muted-foreground">
+              Add every outcome that happened — use + to count the same outcome twice (e.g. two subscriptions closed).
+            </p>
+          </div>
+        )}
 
         {editing ? (
           <div className="mt-6 space-y-4">

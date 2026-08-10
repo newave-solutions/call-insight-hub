@@ -43,6 +43,8 @@ const AnalysisSchema = z.object({
   key_points: z.array(z.string()).nullish().default([]),
   // ISO date string YYYY-MM-DD if the notes clearly mention when the call happened
   detected_date: z.string().nullish().default(null),
+  // True when neither the model nor the keyword parser could confidently classify the call.
+  needs_review: z.boolean().nullish().default(false),
 });
 
 type Analysis = z.infer<typeof AnalysisSchema>;
@@ -141,7 +143,8 @@ Categories — pick every outcome that applies (the same call can have several):
 - "payment": a payment / outstanding balance was taken on the call. Populate payment_amount with the dollar amount collected (numeric).
 - "payment_promise": the customer did not pay on the call but committed to call back / pay later.
 - "billing_update": billing information (card, address, autopay) was updated. If a payment was ALSO taken, include BOTH "billing_update" and "payment".
-- "freeze": account was frozen / paused (e.g. seasonal freeze). A FROZEN account counts the same as a close for retention purposes — use "freeze" (do not also add "closed").
+- FROZEN / PAUSED accounts: a frozen, paused, or seasonal-hold account is the SAME retention result as a
+  close. Return "closed" for it (never "freeze") and mention the freeze in the summary.
 - "refund": a refund was issued to the customer. Populate refund_amount with the refunded dollar amount (numeric).
 - "back_on_schedule": customer was on "the doc" and could not be reached after 3 attempts, so they were placed back on regular schedule. Notes may say "transferred from the doc", "back on schedule", "put back on schedule".
 - "inquiry": customer had doubts/questions, wanted clarification, general info, a complaint, or product/value education — nothing else changed on the account. Use this instead of "other".
@@ -162,7 +165,7 @@ Return every outcome in the "categories" array, in the order they occurred. Also
 - Save + lead sent to Inside Sales for additional service -> categories: ["saved","lead"].
 - Billing card updated + payment of $185 taken on outstanding balance -> categories: ["billing_update","payment"], payment_amount: 185.
 - Reschedule + free re-service scheduled -> categories: ["reschedule","reservice"].
-- Pending cancel from the doc, agent offered freeze -> categories: ["pending_cancel","freeze"].
+- Pending cancel from the doc, agent froze the account -> categories: ["pending_cancel","closed"] (frozen = closed).
 - Customer refunded $60 and rescheduled -> categories: ["refund","reschedule"], refund_amount: 60.
 If only one outcome occurred, return a single-element array.
 
@@ -215,7 +218,7 @@ async function runExtraction(notes: string): Promise<Analysis> {
   try {
     const model = getModel();
     const res = await generateObject({ model, schema: AnalysisSchema, system: SYSTEM_PROMPT, prompt: `Call notes:\n\n${notes}` });
-    return normalize(res.object);
+    return normalize(mergeHeuristics(res.object, notes));
   } catch (err) {
     if (NoObjectGeneratedError.isInstance(err)) {
       const raw = (err as { text?: string }).text ?? "";
@@ -223,12 +226,38 @@ async function runExtraction(notes: string): Promise<Analysis> {
       const parsed = match ? safeJson(match[0]) : null;
       if (parsed) {
         const lenient = AnalysisSchema.safeParse(parsed);
-        if (lenient.success) return normalize(lenient.data);
+        if (lenient.success) return normalize(mergeHeuristics(lenient.data, notes));
       }
     }
     // Never lose a call: fall back to a heuristic read of the notes.
     return normalize(heuristicExtract(notes));
   }
+}
+
+// When the model answered, still let the deterministic parser add outcomes it clearly missed,
+// and fall back entirely when the model produced nothing usable.
+function mergeHeuristics(a: Analysis, notes: string): Analysis {
+  const modelCats = (Array.isArray(a.categories) && a.categories.length > 0 ? a.categories : [a.category])
+    .filter((c): c is Analysis["category"] => Boolean(c) && c !== "other");
+  const { cats: keywordCats } = keywordCategories(notes);
+
+  if (modelCats.length === 0) {
+    const fallback = heuristicExtract(notes);
+    return { ...a, categories: fallback.categories, category: fallback.category, needs_review: fallback.needs_review };
+  }
+
+  const merged = [...modelCats];
+  for (const c of keywordCats) {
+    // "inquiry" is the catch-all; never add it on top of a real outcome.
+    if (c !== "inquiry" && !merged.includes(c)) merged.push(c);
+  }
+  const real = merged.filter((c) => c !== "inquiry");
+  return {
+    ...a,
+    categories: real.length > 0 ? real : merged,
+    category: (real.length > 0 ? real : merged)[0],
+    needs_review: real.length === 0 && keywordCats.length === 0,
+  };
 }
 
 // Last-resort local parser so a call ALWAYS gets logged even if the model is unavailable.
@@ -242,27 +271,49 @@ const SERVICE_MAP: [RegExp, string][] = [
   [/\bpp\b/i, "Protection Program"],
 ];
 
-function heuristicExtract(notes: string): Analysis {
-  const cats: string[] = [];
+// Deterministic keyword classifier — the safety net that guarantees a call is never lost.
+// Returns the outcomes it could prove from explicit words, plus whether anything matched at all.
+function keywordCategories(notes: string): { cats: Analysis["category"][]; matched: boolean } {
+  const cats: Analysis["category"][] = [];
   const has = (re: RegExp) => re.test(notes);
-  if (has(/\bre-?sign(ed|ing)?\b|\bnew agreement\b|reduc\w* to/i)) cats.push("resign");
-  if (has(/\bsaved?\b|\bretain(ed)?\b/i)) cats.push("saved");
-  if (has(/\bclos(ed|ing)\b|\bcancel(l?ed)\b(?!\s*pending)/i)) cats.push("closed");
-  if (has(/\bcancel\s*pending\b/i)) cats.push("cancel_pending");
-  if (has(/\bpending\s*cancel\b|\bthe doc\b/i)) cats.push("pending_cancel");
-  if (has(/\blead\b|inside sales/i)) cats.push("lead");
-  if (has(/\breactivat/i)) cats.push("reactivation");
-  if (has(/\bre-?schedul/i)) cats.push("reschedule");
-  if (has(/\bre-?service\b|\brs\b/i)) cats.push("reservice");
-  if (has(/\bfreez|\bfrozen\b/i)) cats.push("freeze");
-  if (has(/\brefund/i)) cats.push("refund");
-  if (has(/\bpayment\b|\bpaid\b|\bbalance\b/i)) cats.push("payment");
-  if (has(/\bbilling\b|\bcard\b|\bautopay\b/i)) cats.push("billing_update");
-  if (has(/back on schedule/i)) cats.push("back_on_schedule");
-  if (has(/escalat|transferred to (branch|fm|bm)/i)) cats.push("escalation");
-  if (has(/escalat\w*\s+to\s+(a\s+)?(cem|manager)|to cem\b/i)) cats.push("escalated_to_cem");
-  if (cats.length === 0) cats.push("inquiry");
+  const add = (c: Analysis["category"]) => {
+    if (!cats.includes(c)) cats.push(c);
+  };
 
+  // Precedence: the two pending flavors win over a bare "cancel".
+  const cancelPending = has(/\bcancel\s*pending\b|next (service|svc)[^.]{0,40}then cancel/i);
+  const pendingCancel = has(/\bpending\s*cancel\b|\b(the|retention)\s*doc\b|\bon the doc\b/i);
+  if (cancelPending) add("cancel_pending");
+  if (pendingCancel) add("pending_cancel");
+
+  // A negated cancellation is a save, not a close.
+  const keptService = has(/\bnot\s+cancel\w*|\bdid\s?n[o']?t\s+cancel|\bkept\s+(the\s+)?(service|plan|account)|\bdecided to (stay|keep|continue)|\bwill (stay|continue|keep)\b/i);
+  if (keptService || has(/\bsaved?\b|\bsave[sd]?\b|\bretain(ed|ing)?\b|\bretention save\b/i)) add("saved");
+
+  if (has(/\bre-?sign(ed|ing|s)?\b|\bnew agreement\b|\brenew(ed|al)?\b|reduc\w*\s+(price\s+)?to\b|\bprice reduction\b/i)) add("resign");
+  if (has(/\blead\b|\bleads\b|inside sales|\bsent to sales\b|\bIS\s+lead\b/i)) add("lead");
+  if (has(/\breactivat/i)) add("reactivation");
+  // Frozen is the same retention result as a close.
+  if (has(/\bfreez\w*|\bfrozen\b|\bseasonal (hold|pause)\b|\bpaused\b/i)) add("closed");
+  if (!keptService && has(/\bclos(e|ed|ing|ure)\b|\bcancell?(ed|ation)\b|\bterminated\b/i) && !cancelPending && !pendingCancel) add("closed");
+  if (has(/\bre-?schedul\w*|\bpush(ed)? (the )?(service|appointment|appt)\b|\bmov(e|ed) (the )?(service|appointment|appt)\b/i)) add("reschedule");
+  if (has(/\bre-?service\b|\bre-?svc\b|\bRS\b/)) add("reservice");
+  if (has(/\brefund\w*/i)) add("refund");
+  if (has(/\bpayment promise\w*|\bpromised to pay\b|\bwill (call back|pay) (to pay|later|tomorrow|on)\b|\bpay later\b/i)) add("payment_promise");
+  if (has(/\bpayment\b|\bpaid\b|\bcard ran\b|\bran (the )?card\b|\bcollected\b|\bbalance (paid|cleared)\b|\btook (a )?payment\b/i)) add("payment");
+  if (has(/back on schedule|put back on (the )?schedule|transferred from the doc/i)) add("back_on_schedule");
+  if (has(/\bbilling (info|information|update|address)\b|\bupdated (the )?card\b|\bnew card\b|\bautopay\b|\bcard on file\b/i)) add("billing_update");
+  if (has(/escalat\w*\s+to\s+(a\s+)?(cem|manager|retention manager)|\bto cem\b|\bhanded (it |the account )?to (a )?cem\b/i)) add("escalated_to_cem");
+  if (has(/\bescalat\w*|transferred to (the )?(branch|fm|bm|field manager|branch manager)/i)) add("escalation");
+  if (has(/\binquir\w*|\bquestion\w*|\bdoubts?\b|\bclarif\w*|\basked about\b|\bcomplain\w*/i)) add("inquiry");
+
+  const matched = cats.length > 0;
+  return { cats, matched };
+}
+
+function heuristicExtract(notes: string): Analysis {
+  const { cats: found, matched } = keywordCategories(notes);
+  const cats: Analysis["category"][] = matched ? found : ["inquiry"];
   const id = notes.match(/\b(\d{6,9})\b/)?.[1] ?? null;
   const price = notes.match(/\$?\s?(\d{2,4}(?:\.\d{2})?)\s*(?:\/|per)?\s*(?:service|svc)?/i)?.[1];
   const service = SERVICE_MAP.find(([re]) => re.test(notes))?.[1] ?? null;
@@ -275,13 +326,23 @@ function heuristicExtract(notes: string): Analysis {
     price_per_service: price ? Number(price) : null,
     summary: notes.slice(0, 400),
     key_points: [],
+    // Nothing explicit matched — ask the user to confirm the tags.
+    needs_review: !matched,
   });
 }
 
 function normalize(a: Analysis): Analysis {
   const raw = Array.isArray(a.categories) && a.categories.length > 0 ? a.categories : [a.category];
   // "other" is never allowed — an unclassified call is an inquiry.
-  const mapped = raw.map((c) => (c === "other" ? "inquiry" : c)) as Analysis["category"][];
+  // A frozen account is the same retention result as a close.
+  const hadClosed = raw.includes("closed");
+  const mapped: Analysis["category"][] = [];
+  for (const c of raw) {
+    if (c === "other") { if (!mapped.includes("inquiry")) mapped.push("inquiry"); continue; }
+    // Frozen folds into closed; don't double-count when the list already had a close.
+    if (c === "freeze") { if (!hadClosed) mapped.push("closed"); continue; }
+    mapped.push(c);
+  }
   const cats = mapped.length > 0 ? mapped : (["inquiry"] as Analysis["category"][]);
   return {
     ...a,
@@ -290,6 +351,7 @@ function normalize(a: Analysis): Analysis {
     // Keep the boolean in sync with the outcome list — one source of truth.
     escalated_to_cem: (a.escalated_to_cem ?? false) || cats.includes("escalated_to_cem"),
     lead_sold: (a.lead_sold ?? false) && cats.includes("lead"),
+    needs_review: a.needs_review ?? false,
   };
 }
 
@@ -346,10 +408,69 @@ export const analyzeAndSaveCallLog = createServerFn({ method: "POST" })
         key_points: output.key_points,
         call_date,
         date_source,
+        needs_review: output.needs_review ?? false,
       })
       .select()
       .single();
 
+    if (error) throw new Error(error.message);
+    return row;
+  });
+
+// Analyze only — no write. The UI can confirm ambiguous outcomes before anything is saved.
+export const analyzeCallNotes = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({ notes: z.string().min(3) }).parse(input))
+  .handler(async ({ data }) => {
+    const output = await runExtraction(data.notes);
+    return output;
+  });
+
+// Persist a draft produced by analyzeCallNotes (optionally with user-corrected outcomes).
+export const saveDraftCallLog = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z.object({
+      notes: z.string().min(3),
+      callDate: z.string().nullish(),
+      draft: AnalysisSchema,
+    }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const output = normalize(data.draft);
+    const { call_date, date_source } = resolveDate(data.callDate ?? null, output.detected_date ?? null);
+    const cats = output.categories ?? [output.category];
+    const { data: row, error } = await context.supabase
+      .from("call_logs")
+      .insert({
+        user_id: context.userId,
+        raw_notes: data.notes,
+        category: cats[0],
+        categories: cats,
+        customer_name: output.customer_name,
+        customer_id: output.customer_id,
+        summary: output.summary,
+        agreement_length_months: output.agreement_length_months,
+        price_per_service: output.price_per_service,
+        service_name: output.service_name,
+        coupon: output.coupon,
+        coupon_value: output.coupon_value,
+        coupon_amount: output.coupon_amount,
+        payment_amount: output.payment_amount,
+        refund_amount: output.refund_amount,
+        account_label: output.account_label ?? null,
+        escalated_to_cem: output.escalated_to_cem ?? false,
+        lead_sold: output.lead_sold ?? false,
+        follow_up_needed: output.follow_up_needed ?? false,
+        follow_up_notes: (output.follow_up_needed ?? false) ? output.follow_up_notes : null,
+        sentiment: output.sentiment,
+        key_points: output.key_points,
+        call_date,
+        date_source,
+        needs_review: output.needs_review ?? false,
+      })
+      .select()
+      .single();
     if (error) throw new Error(error.message);
     return row;
   });
@@ -409,12 +530,17 @@ export const bulkImportCallLogs = createServerFn({ method: "POST" })
         key_points: out.key_points,
         call_date,
         date_source,
+        needs_review: out.needs_review ?? false,
       };
     });
 
     const { error, data: inserted } = await context.supabase.from("call_logs").insert(rows).select();
     if (error) throw new Error(error.message);
-    return { inserted: inserted?.length ?? 0 };
+    return {
+      inserted: inserted?.length ?? 0,
+      // Rows the parser could not classify — the UI walks the user through tagging them.
+      review: (inserted ?? []).filter((r) => r.needs_review),
+    };
   });
 
 export const listCallLogs = createServerFn({ method: "GET" })
@@ -464,6 +590,7 @@ const UpdateSchema = z.object({
       follow_up_notes: z.string().nullish(),
       sentiment: z.string().nullish(),
       call_date: z.string().nullish(),
+      needs_review: z.boolean().optional(),
     })
     .partial(),
 });
@@ -480,9 +607,14 @@ export const updateCallLog = createServerFn({ method: "POST" })
       patch.categories = [patch.category];
     }
     if (Array.isArray(patch.categories)) {
+      // Frozen folds into closed.
+      patch.categories = patch.categories.map((c) => (c === "freeze" ? "closed" : c));
+      patch.category = patch.categories[0];
       // Keep the escalation flag in sync with the outcome list.
       patch.escalated_to_cem = patch.categories.includes("escalated_to_cem") || patch.escalated_to_cem === true;
       if (!patch.categories.includes("lead")) patch.lead_sold = false;
+      // Confirming outcomes clears the review flag unless explicitly set.
+      if (patch.needs_review === undefined) patch.needs_review = false;
     }
     if (typeof patch.call_date === "string" && patch.call_date) {
       patch.date_source = "user_selected";

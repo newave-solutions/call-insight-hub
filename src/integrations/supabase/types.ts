@@ -34,6 +34,7 @@ export type Database = {
           id: string
           key_points: Json | null
           lead_sold: boolean
+          needs_review: boolean
           payment_amount: number | null
           price_per_service: number | null
           raw_notes: string
@@ -63,6 +64,7 @@ export type Database = {
           id?: string
           key_points?: Json | null
           lead_sold?: boolean
+          needs_review?: boolean
           payment_amount?: number | null
           price_per_service?: number | null
           raw_notes: string
@@ -92,6 +94,7 @@ export type Database = {
           id?: string
           key_points?: Json | null
           lead_sold?: boolean
+          needs_review?: boolean
           payment_amount?: number | null
           price_per_service?: number | null
           raw_notes?: string
