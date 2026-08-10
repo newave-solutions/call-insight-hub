@@ -271,27 +271,49 @@ const SERVICE_MAP: [RegExp, string][] = [
   [/\bpp\b/i, "Protection Program"],
 ];
 
-function heuristicExtract(notes: string): Analysis {
-  const cats: string[] = [];
+// Deterministic keyword classifier — the safety net that guarantees a call is never lost.
+// Returns the outcomes it could prove from explicit words, plus whether anything matched at all.
+function keywordCategories(notes: string): { cats: Analysis["category"][]; matched: boolean } {
+  const cats: Analysis["category"][] = [];
   const has = (re: RegExp) => re.test(notes);
-  if (has(/\bre-?sign(ed|ing)?\b|\bnew agreement\b|reduc\w* to/i)) cats.push("resign");
-  if (has(/\bsaved?\b|\bretain(ed)?\b/i)) cats.push("saved");
-  if (has(/\bclos(ed|ing)\b|\bcancel(l?ed)\b(?!\s*pending)/i)) cats.push("closed");
-  if (has(/\bcancel\s*pending\b/i)) cats.push("cancel_pending");
-  if (has(/\bpending\s*cancel\b|\bthe doc\b/i)) cats.push("pending_cancel");
-  if (has(/\blead\b|inside sales/i)) cats.push("lead");
-  if (has(/\breactivat/i)) cats.push("reactivation");
-  if (has(/\bre-?schedul/i)) cats.push("reschedule");
-  if (has(/\bre-?service\b|\brs\b/i)) cats.push("reservice");
-  if (has(/\bfreez|\bfrozen\b/i)) cats.push("freeze");
-  if (has(/\brefund/i)) cats.push("refund");
-  if (has(/\bpayment\b|\bpaid\b|\bbalance\b/i)) cats.push("payment");
-  if (has(/\bbilling\b|\bcard\b|\bautopay\b/i)) cats.push("billing_update");
-  if (has(/back on schedule/i)) cats.push("back_on_schedule");
-  if (has(/escalat|transferred to (branch|fm|bm)/i)) cats.push("escalation");
-  if (has(/escalat\w*\s+to\s+(a\s+)?(cem|manager)|to cem\b/i)) cats.push("escalated_to_cem");
-  if (cats.length === 0) cats.push("inquiry");
+  const add = (c: Analysis["category"]) => {
+    if (!cats.includes(c)) cats.push(c);
+  };
 
+  // Precedence: the two pending flavors win over a bare "cancel".
+  const cancelPending = has(/\bcancel\s*pending\b|next (service|svc)[^.]{0,40}then cancel/i);
+  const pendingCancel = has(/\bpending\s*cancel\b|\b(the|retention)\s*doc\b|\bon the doc\b/i);
+  if (cancelPending) add("cancel_pending");
+  if (pendingCancel) add("pending_cancel");
+
+  // A negated cancellation is a save, not a close.
+  const keptService = has(/\bnot\s+cancel\w*|\bdid\s?n[o']?t\s+cancel|\bkept\s+(the\s+)?(service|plan|account)|\bdecided to (stay|keep|continue)|\bwill (stay|continue|keep)\b/i);
+  if (keptService || has(/\bsaved?\b|\bsave[sd]?\b|\bretain(ed|ing)?\b|\bretention save\b/i)) add("saved");
+
+  if (has(/\bre-?sign(ed|ing|s)?\b|\bnew agreement\b|\brenew(ed|al)?\b|reduc\w*\s+(price\s+)?to\b|\bprice reduction\b/i)) add("resign");
+  if (has(/\blead\b|\bleads\b|inside sales|\bsent to sales\b|\bIS\s+lead\b/i)) add("lead");
+  if (has(/\breactivat/i)) add("reactivation");
+  // Frozen is the same retention result as a close.
+  if (has(/\bfreez\w*|\bfrozen\b|\bseasonal (hold|pause)\b|\bpaused\b/i)) add("closed");
+  if (!keptService && has(/\bclos(e|ed|ing|ure)\b|\bcancell?(ed|ation)\b|\bterminated\b/i) && !cancelPending && !pendingCancel) add("closed");
+  if (has(/\bre-?schedul\w*|\bpush(ed)? (the )?(service|appointment|appt)\b|\bmov(e|ed) (the )?(service|appointment|appt)\b/i)) add("reschedule");
+  if (has(/\bre-?service\b|\bre-?svc\b|\bRS\b/)) add("reservice");
+  if (has(/\brefund\w*/i)) add("refund");
+  if (has(/\bpayment promise\w*|\bpromised to pay\b|\bwill (call back|pay) (to pay|later|tomorrow|on)\b|\bpay later\b/i)) add("payment_promise");
+  if (has(/\bpayment\b|\bpaid\b|\bcard ran\b|\bran (the )?card\b|\bcollected\b|\bbalance (paid|cleared)\b|\btook (a )?payment\b/i)) add("payment");
+  if (has(/back on schedule|put back on (the )?schedule|transferred from the doc/i)) add("back_on_schedule");
+  if (has(/\bbilling (info|information|update|address)\b|\bupdated (the )?card\b|\bnew card\b|\bautopay\b|\bcard on file\b/i)) add("billing_update");
+  if (has(/escalat\w*\s+to\s+(a\s+)?(cem|manager|retention manager)|\bto cem\b|\bhanded (it |the account )?to (a )?cem\b/i)) add("escalated_to_cem");
+  if (has(/\bescalat\w*|transferred to (the )?(branch|fm|bm|field manager|branch manager)/i)) add("escalation");
+  if (has(/\binquir\w*|\bquestion\w*|\bdoubts?\b|\bclarif\w*|\basked about\b|\bcomplain\w*/i)) add("inquiry");
+
+  const matched = cats.length > 0;
+  return { cats, matched };
+}
+
+function heuristicExtract(notes: string): Analysis {
+  const { cats: found, matched } = keywordCategories(notes);
+  const cats: Analysis["category"][] = matched ? found : ["inquiry"];
   const id = notes.match(/\b(\d{6,9})\b/)?.[1] ?? null;
   const price = notes.match(/\$?\s?(\d{2,4}(?:\.\d{2})?)\s*(?:\/|per)?\s*(?:service|svc)?/i)?.[1];
   const service = SERVICE_MAP.find(([re]) => re.test(notes))?.[1] ?? null;
@@ -304,14 +326,18 @@ function heuristicExtract(notes: string): Analysis {
     price_per_service: price ? Number(price) : null,
     summary: notes.slice(0, 400),
     key_points: [],
+    // Nothing explicit matched — ask the user to confirm the tags.
+    needs_review: !matched,
   });
 }
 
 function normalize(a: Analysis): Analysis {
   const raw = Array.isArray(a.categories) && a.categories.length > 0 ? a.categories : [a.category];
   // "other" is never allowed — an unclassified call is an inquiry.
-  const mapped = raw.map((c) => (c === "other" ? "inquiry" : c)) as Analysis["category"][];
-  const cats = mapped.length > 0 ? mapped : (["inquiry"] as Analysis["category"][]);
+  // A frozen account is the same retention result as a close.
+  const mapped = raw.map((c) => (c === "other" ? "inquiry" : c === "freeze" ? "closed" : c)) as Analysis["category"][];
+  const deduped = mapped.filter((c, i) => c !== "closed" || mapped.indexOf(c) === i || mapped[i] !== "closed" || i === mapped.indexOf("closed"));
+  const cats = deduped.length > 0 ? deduped : (["inquiry"] as Analysis["category"][]);
   return {
     ...a,
     categories: cats,
@@ -319,6 +345,7 @@ function normalize(a: Analysis): Analysis {
     // Keep the boolean in sync with the outcome list — one source of truth.
     escalated_to_cem: (a.escalated_to_cem ?? false) || cats.includes("escalated_to_cem"),
     lead_sold: (a.lead_sold ?? false) && cats.includes("lead"),
+    needs_review: a.needs_review ?? false,
   };
 }
 
