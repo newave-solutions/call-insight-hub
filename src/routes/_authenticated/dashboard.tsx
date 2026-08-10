@@ -1302,6 +1302,11 @@ function LogRow({ log, role, onSelect, onDelete }: { log: Log; role: Role; onSel
           {log.lead_sold && (
             <span className="rounded-md bg-emerald-500/10 px-1 py-0.5 text-[9px] font-bold uppercase text-emerald-700">sold</span>
           )}
+          {log.needs_review && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-1 py-0.5 text-[9px] font-bold uppercase text-amber-700">
+              <AlertTriangle className="h-2.5 w-2.5" /> review
+            </span>
+          )}
           <AuthorityBadge role={role} log={log} />
         </div>
       </TableCell>
