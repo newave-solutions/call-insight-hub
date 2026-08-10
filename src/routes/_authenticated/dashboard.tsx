@@ -1494,7 +1494,28 @@ function DetailDrawerInner({
 
   async function save() {
     const cats = form.categories.length > 0 ? form.categories : [form.category as Category];
-    // eslint-disable-next-line no-empty
+    return saveWith(cats);
+  }
+
+  const savedCats = logCategories(log);
+  const outcomesDirty =
+    form.categories.length !== savedCats.length ||
+    form.categories.some((c, i) => c !== savedCats[i]);
+
+  // Quick path: change only the outcome tags, straight from the drawer.
+  async function saveOutcomes() {
+    const cats = form.categories;
+    if (cats.length === 0) return;
+    await onSave({
+      categories: cats,
+      category: cats[0],
+      escalated_to_cem: cats.includes("escalated_to_cem"),
+      lead_sold: form.lead_sold && cats.includes("lead"),
+      needs_review: false,
+    });
+  }
+
+  async function saveWith(cats: Category[]) {
     const patch: Record<string, unknown> = {
       customer_name: form.customer_name.trim() || null,
       customer_id: form.customer_id.trim() || null,
