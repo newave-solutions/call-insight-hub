@@ -536,7 +536,11 @@ export const bulkImportCallLogs = createServerFn({ method: "POST" })
 
     const { error, data: inserted } = await context.supabase.from("call_logs").insert(rows).select();
     if (error) throw new Error(error.message);
-    return { inserted: inserted?.length ?? 0 };
+    return {
+      inserted: inserted?.length ?? 0,
+      // Rows the parser could not classify — the UI walks the user through tagging them.
+      review: (inserted ?? []).filter((r) => r.needs_review),
+    };
   });
 
 export const listCallLogs = createServerFn({ method: "GET" })
