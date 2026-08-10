@@ -1537,6 +1537,7 @@ function DetailDrawerInner({
       follow_up_notes: form.follow_up_needed ? form.follow_up_notes.trim() || null : null,
       sentiment: form.sentiment.trim() || null,
       call_date: new Date(form.call_date).toISOString(),
+      needs_review: false,
     };
     await onSave(patch);
     setEditing(false);
