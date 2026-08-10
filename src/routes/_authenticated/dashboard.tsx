@@ -610,7 +610,15 @@ function Dashboard() {
           ) : (
             <MiniKpi icon={Wallet} label="Payments collected" value={`$${stats.paymentTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} />
           )}
-          <MiniKpi icon={CalendarClock} label="Avg agreement" value={avgAgreement ? `${avgAgreement} mo` : "—"} />
+          {role === "ces" ? (
+            <MiniKpi
+              icon={Ticket}
+              label={`Coupons given (${stats.couponsUsed})`}
+              value={`$${stats.couponTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+            />
+          ) : (
+            <MiniKpi icon={CalendarClock} label="Avg agreement" value={avgAgreement ? `${avgAgreement} mo` : "—"} />
+          )}
         </section>
 
         {/* Commission strip */}
@@ -1281,6 +1289,10 @@ function CommissionStrip({
         value={`${stats.lead ?? 0}${stats.leadsSold ? ` (${stats.leadsSold} sold)` : ""}`}
       />
       {role === "ces" && <CommissionStat label="Escalated to CEM" value={String(stats.escalatedToCem ?? 0)} />}
+      <CommissionStat
+        label={`Coupons given (${stats.couponsUsed ?? 0})`}
+        value={`$${(stats.couponTotal ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+      />
       {(stats.refundTotal ?? 0) > 0 && (
         <CommissionStat
           label="Refunds issued"
