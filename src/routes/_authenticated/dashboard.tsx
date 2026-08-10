@@ -421,7 +421,7 @@ function Dashboard() {
 
   // Total calls logged per day over the last 30 days (zero-filled).
   const monthSeries = useMemo(() => {
-    const days: { day: string; date: string; calls: number }[] = [];
+    const days: { day: string; date: string; calls: number; idx: number }[] = [];
     const map = new Map<string, (typeof days)[number]>();
     for (let i = 29; i >= 0; i--) {
       const d = new Date();
@@ -432,6 +432,7 @@ function Dashboard() {
         day: d.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
         date: key,
         calls: 0,
+        idx: 29 - i,
       };
       days.push(entry);
       map.set(key, entry);
@@ -442,6 +443,38 @@ function Dashboard() {
     }
     return days;
   }, [logs]);
+
+  const monthTotal = useMemo(() => monthSeries.reduce((s, d) => s + d.calls, 0), [monthSeries]);
+  const activeDays = useMemo(() => monthSeries.filter((d) => d.calls > 0).length, [monthSeries]);
+  const monthAvg = activeDays ? Math.round((monthTotal / activeDays) * 10) / 10 : 0;
+  const bestDay = useMemo(
+    () => monthSeries.reduce<(typeof monthSeries)[number] | null>((best, d) => (d.calls > (best?.calls ?? 0) ? d : best), null),
+    [monthSeries],
+  );
+
+  // Which weekdays produce wins vs. losses over the last 30 days.
+  const dowSeries = useMemo(() => {
+    const labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const rows = labels.map((label) => ({ label, win: 0, loss: 0, rest: 0, total: 0 }));
+    const cutoff = new Date();
+    cutoff.setHours(0, 0, 0, 0);
+    cutoff.setDate(cutoff.getDate() - 29);
+    const winCats: Category[] =
+      role === "cem" ? ["saved", "resign", "reactivation"] : ["reschedule", "reservice", "payment", "billing_update", "resign"];
+    const lossCats: Category[] = ["closed", "cancel_pending", "pending_cancel", "escalated_to_cem"];
+    for (const l of logs) {
+      const d = new Date(l.call_date ?? l.created_at);
+      if (d < cutoff) continue;
+      const row = rows[d.getDay()];
+      for (const c of logCategories(l)) {
+        row.total += 1;
+        if (winCats.includes(c)) row.win += 1;
+        else if (lossCats.includes(c)) row.loss += 1;
+        else row.rest += 1;
+      }
+    }
+    return rows;
+  }, [logs, role]);
 
   // Per-day tally across ALL history — for the Daily Totals tracker.
   const dailyTotals = useMemo(() => {
