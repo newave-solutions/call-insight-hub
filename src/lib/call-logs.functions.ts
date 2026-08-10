@@ -314,7 +314,7 @@ function keywordCategories(notes: string): { cats: Analysis["category"][]; match
   if (did(/\blead\b|\bleads\b|inside sales|\bsent to sales\b|\bIS\s+lead\b/i)) add("lead");
   // Reactivation counts only when the subscription was reopened on THIS call — not when the
   // customer was merely told they can reactivate later.
-  if (did(/\breactivat(ed|ing|ion)\b/i) && !/\breactivat\w*/i.test(notes.match(new RegExp(`[^.!?\\n]*\\breactivat\\w*[^.!?\\n]*`, "i"))?.[0]?.match(OFFERED_OR_FUTURE) ? "reactivate" : "")) add("reactivation");
+  if (did(/\breactivat(ed|ing|ion)\b/i)) add("reactivation");
   // Frozen is the same retention result as a close.
   if (did(/\bfroze\b|\bfroze[n]?\b|\bfreez(e|ing)\b|\bseasonal (hold|pause)\b|\bpaused\b/i)) add("closed");
   if (!keptService && did(/\bclos(e|ed|ing|ure)\b|\bcancell?(ed|ation)\b|\bterminated\b/i) && !cancelPending && !pendingCancel) add("closed");
