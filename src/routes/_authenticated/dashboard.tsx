@@ -143,6 +143,16 @@ function toDayKey(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+// The analysis payload returned by analyzeCallNotes, before it is persisted.
+type Draft = Awaited<ReturnType<typeof analyzeCallNotes>>;
+
+function unusedDayKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 const CATEGORY_META: Record<
   Category,
   { label: string; icon: typeof Shield; color: string; dot: string; hex: string }
