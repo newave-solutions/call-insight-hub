@@ -1005,51 +1005,24 @@ function Dashboard() {
               </div>
             )}
           </div>
-
-          <aside className="rounded-xl border bg-card p-3 shadow-sm">
-            {logs.length === 0 ? (
-              <>
-                <div className="mb-2 flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5 text-primary" />
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI insights</h3>
-                </div>
-                <p className="text-xs text-muted-foreground">Log at least one call to see insights.</p>
-              </>
-            ) : insightsQuery.isLoading ? (
-              <>
-                <div className="mb-2 flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5 text-primary" />
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI insights</h3>
-                </div>
-                <p className="text-xs text-muted-foreground">Analyzing…</p>
-              </>
-            ) : (
-              <div className="space-y-3">
-                {insightsQuery.data?.score != null && (
-                  <ScoreCard score={insightsQuery.data.score} label={insightsQuery.data.scoreLabel} />
-                )}
-                <div>
-                  <div className="mb-1.5 flex items-center gap-1.5">
-                    <TrendingUp className="h-3.5 w-3.5 text-primary" />
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overall performance</h3>
-                  </div>
-                  <MarkdownBlock content={insightsQuery.data?.overall ?? ""} />
-                </div>
-              </div>
-            )}
-          </aside>
-        </section>
-
-        {/* Daily totals tracker */}
-        <section className="mt-4">
-          <DailyTotalsTracker
-            rows={dailyTotals}
-            selected={dayFilter}
-            onSelect={(d) => setDayFilter(d)}
-            role={role}
-          />
         </section>
       </main>
+
+      {/* Floating, semi-transparent performance ticker pinned to the right edge */}
+      <InsightTicker
+        score={insightsQuery.data?.score ?? null}
+        scoreLabel={insightsQuery.data?.scoreLabel ?? ""}
+        overall={insightsQuery.data?.overall ?? ""}
+        loading={insightsQuery.isLoading}
+        empty={logs.length === 0}
+        stats={{
+          calls: logs.length,
+          saveRate,
+          today: dailyTotals.find((r) => r.key === toDayKey(new Date()))?.total ?? 0,
+          avgPerDay: monthAvg,
+          coupons: stats.couponTotal,
+        }}
+      />
 
       <ImportDialog
         open={uploadOpen}
