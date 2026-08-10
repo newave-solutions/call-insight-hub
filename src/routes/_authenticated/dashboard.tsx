@@ -899,7 +899,128 @@ function Dashboard() {
           saving={updateMut.isPending}
         />
       )}
+
+      {/* Composer: unclassifiable notes must be tagged by the user before anything is saved. */}
+      {confirmDraft && (
+        <ConfirmOutcomeDialog
+          notes={confirmDraft.notes}
+          summary={confirmDraft.draft.summary ?? null}
+          customerName={confirmDraft.draft.customer_name ?? null}
+          customerId={confirmDraft.draft.customer_id ?? null}
+          serviceName={confirmDraft.draft.service_name ?? null}
+          price={confirmDraft.draft.price_per_service ?? null}
+          initial={(confirmDraft.draft.categories as Category[] | null) ?? []}
+          saving={confirmSaveMut.isPending}
+          onCancel={() => setConfirmDraft(null)}
+          onConfirm={(cats) =>
+            confirmSaveMut.mutate({
+              notes: confirmDraft.notes,
+              callDate: confirmDraft.callDate,
+              draft: { ...confirmDraft.draft, categories: cats, category: cats[0] },
+            })
+          }
+        />
+      )}
+
+      {/* Imported rows the parser could not classify — walked one at a time. */}
+      {reviewQueue.length > 0 && (() => {
+        const row = logs.find((l) => l.id === reviewQueue[0]);
+        if (!row) return null;
+        const advance = () => setReviewQueue((q) => q.slice(1));
+        return (
+          <ConfirmOutcomeDialog
+            key={row.id}
+            notes={row.raw_notes}
+            summary={row.summary}
+            customerName={row.customer_name}
+            customerId={row.customer_id}
+            serviceName={row.service_name}
+            price={row.price_per_service}
+            initial={logCategories(row)}
+            saving={updateMut.isPending}
+            remaining={reviewQueue.length}
+            onCancel={advance}
+            onConfirm={async (cats) => {
+              await updateMut.mutateAsync({
+                id: row.id,
+                patch: { categories: cats, category: cats[0], needs_review: false },
+              });
+              advance();
+            }}
+          />
+        );
+      })()}
     </div>
+  );
+}
+
+/** Popup that forces a human decision when a call could not be categorized. */
+function ConfirmOutcomeDialog({
+  notes,
+  summary,
+  customerName,
+  customerId,
+  serviceName,
+  price,
+  initial,
+  saving,
+  remaining,
+  onCancel,
+  onConfirm,
+}: {
+  notes: string;
+  summary: string | null;
+  customerName: string | null;
+  customerId: string | null;
+  serviceName: string | null;
+  price: number | null;
+  initial: Category[];
+  saving: boolean;
+  remaining?: number;
+  onCancel: () => void;
+  onConfirm: (cats: Category[]) => void;
+}) {
+  const [cats, setCats] = useState<Category[]>(initial.filter((c) => c !== "other"));
+  return (
+    <Dialog open onOpenChange={(o) => !o && onCancel()}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-500" />
+            Confirm the outcome
+            {remaining && remaining > 1 ? (
+              <span className="text-xs font-normal text-muted-foreground">({remaining} left)</span>
+            ) : null}
+          </DialogTitle>
+          <DialogDescription>
+            These notes couldn't be classified automatically. Pick every outcome that applies — nothing is
+            counted until you confirm.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="rounded-lg border bg-muted/40 p-3 text-xs">
+            <div className="flex flex-wrap gap-x-3 gap-y-1 font-medium">
+              <span>{customerName || "Unnamed customer"}</span>
+              {customerId && <span className="font-mono text-muted-foreground">#{customerId}</span>}
+              {serviceName && <span className="text-muted-foreground">{serviceName}</span>}
+              {price != null && <span className="text-muted-foreground">${price}/svc</span>}
+            </div>
+            <p className="mt-1.5 line-clamp-4 text-muted-foreground">{summary || notes}</p>
+          </div>
+          <OutcomeEditor value={cats} onChange={setCats} />
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={onCancel} disabled={saving}>
+            {remaining ? "Skip for now" : "Cancel"}
+          </Button>
+          <Button onClick={() => onConfirm(cats)} disabled={saving || cats.length === 0}>
+            {saving ? "Saving…" : "Confirm & log"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
