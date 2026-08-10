@@ -314,11 +314,10 @@ function clauses(notes: string): string[] {
 function keywordCategories(notes: string): { cats: Analysis["category"][]; matched: boolean } {
   const cats: Analysis["category"][] = [];
   const parts = clauses(notes);
-// Refusal wording. A refusal kills the OFFERED thing, but the cancellation that follows it
-// ("offered 50% off, customer declined and cancelled") really did happen.
-const REFUSED =
-  /\b(declin(e|ed|es)|refus(e|ed|es)|reject(ed)?|not interested|no interest|said no|would ?n[o']?t|turned (it )?down|did ?n[o']?t (accept|agree|want|take))\b/i;
-
+  // Refusal wording. A refusal kills the OFFERED thing, but the cancellation that follows it
+  // ("offered 50% off, customer declined and cancelled") really did happen.
+  const REFUSED =
+    /\b(declin(e|ed|es)|refus(e|ed|es)|reject(ed)?|not interested|no interest|said no|would ?n[o']?t|turned (it )?down|did ?n[o']?t (accept|agree|want|take))\b/i;
   const has = (re: RegExp) => re.test(notes);
   // True only when the keyword appears in a clause that is not an offer / refusal / future plan.
   const did = (re: RegExp) => parts.some((p) => re.test(p) && !OFFERED_OR_FUTURE.test(p));
@@ -355,8 +354,17 @@ const REFUSED =
   // customer was merely told they can reactivate later.
   if (did(/\breactivat(ed|ing|ion)\b/i)) add("reactivation");
   // Frozen is the same retention result as a close.
-  if (did(/\bfroze\b|\bfroze[n]?\b|\bfreez(e|ing)\b|\bseasonal (hold|pause)\b|\bpaused\b/i)) add("closed");
-  if (!keptService && did(/\bclos(e|ed|ing|ure)\b|\bcancell?(ed|ation)\b|\bterminated\b/i) && !cancelPending && !pendingCancel) add("closed");
+  // A close/freeze mentioned only to describe what is being reopened is not a new close.
+  const reactivated = cats.includes("reactivation");
+  if (!reactivated && didAfterRefusal(/\bfroze\b|\bfroze[n]?\b|\bfreez(e|ing)\b|\bseasonal (hold|pause)\b|\bpaused\b/i)) add("closed");
+  if (
+    !keptService &&
+    !reactivated &&
+    didAfterRefusal(/\bclos(e|ed|ing|ure)\b|\bcancell?(ed|ation)\b|\bcancell?ing\b|\bterminated\b/i) &&
+    !cancelPending &&
+    !pendingCancel
+  )
+    add("closed");
   if (did(/\bre-?schedul(e|ed|ing)\b|\bpush(ed)? (the )?(service|appointment|appt)\b|\bmov(e|ed) (the )?(service|appointment|appt)\b/i)) add("reschedule");
   if (did(/\bre-?service\b|\bre-?svc\b|\bRS\b/)) add("reservice");
   if (did(/\brefund(ed|s)?\b/i)) add("refund");
