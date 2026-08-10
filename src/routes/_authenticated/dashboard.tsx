@@ -183,7 +183,8 @@ const CHART_CATEGORIES_BY_ROLE: Record<Role, Category[]> = {
 function Dashboard() {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const analyze = useServerFn(analyzeAndSaveCallLog);
+  const analyzeFn = useServerFn(analyzeCallNotes);
+  const saveDraftFn = useServerFn(saveDraftCallLog);
   const del = useServerFn(deleteCallLog);
   const listFn = useServerFn(listCallLogs);
   const insightsFn = useServerFn(generateInsights);
@@ -224,10 +225,25 @@ function Dashboard() {
     refetchInterval: 15000,
   });
 
+  // Analysis first: if the outcome is unclear, ask the user to confirm tags before anything is saved.
+  const [confirmDraft, setConfirmDraft] = useState<{
+    notes: string;
+    callDate: string;
+    draft: Draft;
+  } | null>(null);
+
   const analyzeMut = useMutation({
-    mutationFn: (input: { notes: string; callDate: string }) =>
-      analyze({ data: { notes: input.notes, callDate: input.callDate } }),
-    onSuccess: () => {
+    mutationFn: async (input: { notes: string; callDate: string }) => {
+      const draft = await analyzeFn({ data: { notes: input.notes } });
+      if (draft.needs_review) return { pending: { ...input, draft } } as const;
+      await saveDraftFn({ data: { notes: input.notes, callDate: input.callDate, draft } });
+      return { pending: null } as const;
+    },
+    onSuccess: (res) => {
+      if (res.pending) {
+        setConfirmDraft(res.pending);
+        return;
+      }
       setNotes("");
       setCallDate(new Date());
       qc.invalidateQueries({ queryKey: ["call_logs"] });
@@ -238,6 +254,21 @@ function Dashboard() {
     onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to analyze"),
   });
 
+  const confirmSaveMut = useMutation({
+    mutationFn: (input: { notes: string; callDate: string; draft: Draft }) =>
+      saveDraftFn({ data: { notes: input.notes, callDate: input.callDate, draft: { ...input.draft, needs_review: false } } }),
+    onSuccess: () => {
+      setConfirmDraft(null);
+      setNotes("");
+      setCallDate(new Date());
+      qc.invalidateQueries({ queryKey: ["call_logs"] });
+      qc.invalidateQueries({ queryKey: ["insights"] });
+      toast.success("Call logged");
+      textareaRef.current?.focus();
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Save failed"),
+  });
+
   const bulkMut = useMutation({
     mutationFn: (items: ParsedEntry[]) => bulkImportFn({ data: { items } }),
     onSuccess: (res) => {
@@ -245,9 +276,18 @@ function Dashboard() {
       qc.invalidateQueries({ queryKey: ["insights"] });
       toast.success(`Imported ${res.inserted} call${res.inserted === 1 ? "" : "s"}`);
       setUploadOpen(false);
+      if (res.review.length > 0) {
+        setReviewQueue(res.review.map((r) => r.id));
+        toast.warning(
+          `${res.review.length} call${res.review.length === 1 ? "" : "s"} need outcome confirmation`,
+        );
+      }
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Import failed"),
   });
+
+  // Imported rows that couldn't be classified — confirmed one at a time.
+  const [reviewQueue, setReviewQueue] = useState<string[]>([]);
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => del({ data: { id } }),
@@ -359,7 +399,7 @@ function Dashboard() {
       if (!e) continue;
       for (const c of logCategories(l)) {
         if (c === "saved") e.saved += 1;
-        else if (c === "closed" || c === "freeze") e.closed += 1;
+        else if (c === "closed") e.closed += 1;
         else if (c === "resign") e.resign += 1;
       }
       if (l.coupon_amount) e.coupons += Number(l.coupon_amount);
@@ -395,7 +435,6 @@ function Dashboard() {
       e.total += 1;
       for (const c of logCategories(l)) {
         e.cats[c] += 1;
-        if (c === "freeze") e.cats.closed += 1;
       }
       if (l.coupon_amount) e.coupons += Number(l.coupon_amount);
       if (l.payment_amount) e.payments += Number(l.payment_amount);
