@@ -3,6 +3,8 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { generateObject, generateText, NoObjectGeneratedError } from "ai";
 import { z } from "zod";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
+import { THEME_VALUES, SEVERITY_VALUES, ENTITY_TYPES, THEME_META, detectThemes, themeLabel } from "./themes";
+import { recordThemes } from "./patterns.server";
 
 export const CATEGORY_VALUES = [
   "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
@@ -45,6 +47,21 @@ const AnalysisSchema = z.object({
   detected_date: z.string().nullish().default(null),
   // True when neither the model nor the keyword parser could confidently classify the call.
   needs_review: z.boolean().nullish().default(false),
+  // Voice-of-customer themes: WHY the customer called / why they want to leave, from a fixed
+  // vocabulary so recurring issues can be counted across calls.
+  themes: z
+    .array(
+      z.object({
+        theme: z.enum(THEME_VALUES),
+        severity: z.enum(SEVERITY_VALUES).nullish().default("mentioned"),
+        is_cancel_driver: z.boolean().nullish().default(false),
+        quote: z.string().nullish().default(null),
+        entity_type: z.enum(ENTITY_TYPES).nullish().default(null),
+        entity_name: z.string().nullish().default(null),
+      }),
+    )
+    .nullish()
+    .default([]),
 });
 
 type Analysis = z.infer<typeof AnalysisSchema>;
@@ -237,6 +254,20 @@ Set follow_up_needed = false for ALL of these (they are normal work, not follow-
 
 If follow_up_needed is false, follow_up_notes must be null.
 
+THEMES — WHY the customer called / why they are leaving (voice of customer):
+Separately from the outcome, return every applicable theme so recurring problems can be counted
+across calls. Use ONLY these theme keys:
+${Object.entries(THEME_META).map(([k, v]) => `- ${k}: ${v.hint}`).join("\n")}
+For each theme return:
+- severity: "mentioned" (stated in passing), "frustrated" (clearly upset about it), or
+  "cancel_driver" (this is the reason they want to cancel / did cancel).
+- is_cancel_driver: true only when this theme is the stated reason for cancelling or wanting to.
+- quote: a SHORT verbatim phrase from the notes that proves the theme (max ~25 words). Never invent.
+- entity_type + entity_name when the notes name a person, branch, route, or plan tied to the
+  complaint (e.g. tech "Jose", "Kansas East" route). Leave both null when nothing is named.
+Themes are about the customer's experience and reasons, NOT about the outcome. A call can have
+zero themes (return []) — do not force one. Do not invent a theme from an agent action.
+
 Return JSON matching the schema exactly. Use null for missing text; 0 for coupon_amount when no discount; false for follow_up_needed when nothing is truly pending.`;
 
 async function runExtraction(notes: string): Promise<Analysis> {
@@ -277,8 +308,15 @@ function mergeHeuristics(a: Analysis, notes: string): Analysis {
     if (c !== "inquiry" && !merged.includes(c)) merged.push(c);
   }
   const real = merged.filter((c) => c !== "inquiry");
+  // Themes: keep everything the model found, and add keyword-detected themes it missed.
+  const modelThemes = a.themes ?? [];
+  const themes = [...modelThemes];
+  for (const t of detectThemes(notes)) {
+    if (!themes.some((m) => m.theme === t.theme)) themes.push(t);
+  }
   return {
     ...a,
+    themes,
     categories: real.length > 0 ? real : merged,
     category: (real.length > 0 ? real : merged)[0],
     needs_review: real.length === 0 && keywordCats.length === 0,
@@ -394,6 +432,7 @@ function heuristicExtract(notes: string): Analysis {
     price_per_service: price ? Number(price) : null,
     summary: notes.slice(0, 400),
     key_points: [],
+    themes: detectThemes(notes),
     // Nothing explicit matched — ask the user to confirm the tags.
     needs_review: !matched,
   });
@@ -442,6 +481,37 @@ function resolveDate(userDate: string | null | undefined, detected: string | nul
   return { call_date: new Date().toISOString(), date_source: "auto" };
 }
 
+// Persist voice-of-customer themes for a saved call and return any recurring-issue alerts that
+// just crossed a threshold, so the UI can tell the agent while the call is still fresh.
+async function saveThemesFor(
+  supabase: Parameters<typeof recordThemes>[0],
+  userId: string,
+  entries: { row: { id: string; customer_id: string | null; call_date: string | null }; analysis: Analysis }[],
+) {
+  const payload = entries
+    .filter((e) => (e.analysis.themes ?? []).length > 0)
+    .map((e) => ({
+      callLogId: e.row.id,
+      customerId: e.row.customer_id,
+      occurredAt: e.row.call_date ?? new Date().toISOString(),
+      themes: (e.analysis.themes ?? []).map((t) => ({
+        theme: t.theme,
+        severity: t.severity ?? "mentioned",
+        is_cancel_driver: t.is_cancel_driver ?? false,
+        quote: t.quote ?? null,
+        entity_type: t.entity_type ?? null,
+        entity_name: t.entity_name ?? null,
+      })),
+    }));
+  if (payload.length === 0) return [];
+  try {
+    return await recordThemes(supabase, userId, payload);
+  } catch {
+    // Theme tracking must never block logging a call.
+    return [];
+  }
+}
+
 export const analyzeAndSaveCallLog = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
@@ -484,7 +554,8 @@ export const analyzeAndSaveCallLog = createServerFn({ method: "POST" })
       .single();
 
     if (error) throw new Error(error.message);
-    return row;
+    const alerts = await saveThemesFor(context.supabase, context.userId, [{ row, analysis: output }]);
+    return { ...row, pattern_alerts: alerts };
   });
 
 // Analyze only — no write. The UI can confirm ambiguous outcomes before anything is saved.
@@ -542,7 +613,8 @@ export const saveDraftCallLog = createServerFn({ method: "POST" })
       .select()
       .single();
     if (error) throw new Error(error.message);
-    return row;
+    const alerts = await saveThemesFor(context.supabase, context.userId, [{ row, analysis: output }]);
+    return { ...row, pattern_alerts: alerts };
   });
 
 export const bulkImportCallLogs = createServerFn({ method: "POST" })
@@ -606,7 +678,13 @@ export const bulkImportCallLogs = createServerFn({ method: "POST" })
 
     const { error, data: inserted } = await context.supabase.from("call_logs").insert(rows).select();
     if (error) throw new Error(error.message);
+    const bulkAlerts = await saveThemesFor(
+      context.supabase,
+      context.userId,
+      (inserted ?? []).map((row, idx) => ({ row, analysis: results[idx] })),
+    );
     return {
+      pattern_alerts: bulkAlerts,
       inserted: inserted?.length ?? 0,
       // Rows the parser could not classify — the UI walks the user through tagging them.
       review: (inserted ?? []).filter((r) => r.needs_review),
@@ -701,7 +779,11 @@ export const updateCallLog = createServerFn({ method: "POST" })
 
 export const generateInsights = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
+  // The browser passes its own local day so the briefing matches the agent's day, not UTC.
+  .inputValidator((input: unknown) =>
+    z.object({ todayKey: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish() }).nullish().parse(input ?? {}),
+  )
+  .handler(async ({ data, context }) => {
     const { data: logs, error } = await context.supabase
       .from("call_logs")
       .select("category,categories,customer_name,summary,agreement_length_months,price_per_service,service_name,coupon,coupon_value,coupon_amount,payment_amount,refund_amount,account_label,escalated_to_cem,lead_sold,sentiment,follow_up_needed,key_points,call_date,created_at")
@@ -715,7 +797,27 @@ export const generateInsights = createServerFn({ method: "POST" })
     const model = getModel();
 
     // Today window
-    const todayKey = new Date().toISOString().slice(0, 10);
+    const todayKey = data?.todayKey ?? new Date().toISOString().slice(0, 10);
+
+    // Recurring customer-experience themes over the last 30 days — the "why" behind the numbers.
+    const since = new Date(Date.now() - 30 * 86400000).toISOString();
+    const { data: themeRows } = await context.supabase
+      .from("call_log_themes")
+      .select("theme,severity,is_cancel_driver,quote,entity_type,entity_name,customer_id")
+      .gte("occurred_at", since);
+    const themeTally = new Map<string, { count: number; drivers: number; quotes: string[] }>();
+    for (const r of themeRows ?? []) {
+      const t = themeTally.get(r.theme) ?? { count: 0, drivers: 0, quotes: [] };
+      t.count += 1;
+      if (r.is_cancel_driver) t.drivers += 1;
+      if (r.quote && t.quotes.length < 2) t.quotes.push(r.quote);
+      themeTally.set(r.theme, t);
+    }
+    const themeSummary = [...themeTally.entries()]
+      .sort((a, b) => b[1].drivers - a[1].drivers || b[1].count - a[1].count)
+      .slice(0, 8)
+      .map(([k, v]) => `${themeLabel(k)}: ${v.count} mentions, ${v.drivers} as cancel reason${v.quotes.length ? ` — e.g. "${v.quotes[0]}"` : ""}`)
+      .join("\n");
     const todaysLogs = logs.filter((l) => (l.call_date ?? l.created_at).slice(0, 10) === todayKey);
 
     const [dailyRes, overallRes] = await Promise.all([
@@ -728,8 +830,8 @@ export const generateInsights = createServerFn({ method: "POST" })
       generateText({
         model,
         system:
-          "You are a retention analyst for SAELA PEST CONTROL producing an OVERALL PERFORMANCE REVIEW across the agent's entire logged history. Commission drivers: payments collected, signed resigns, leads sent to sales (bonus when sold), and — for managers — saves (a save means the customer committed to at least 2 more services); a subscription flagged pending cancel after 3 GEOC attempts should be escalated to a CEM. Grade the agent against the Saela Way customer-experience values: **building value**, **ownership**, **empathy**, **professionalism**, and **clear communication** — in addition to hard metrics. Use GitHub-flavored MARKDOWN with ## headings and - bullets. Sections REQUIRED: `## Trends over time` (month-over-month or week-over-week movement), `## Saela Way scorecard` (one bullet per value: building value, ownership, empathy, professionalism, communication — each with a short assessment and evidence from the notes), `## Strengths`, `## Weaknesses`, `## Coaching recommendations`. Then a final line exactly: `SCORE: <integer 0-100> — <one-line label>`. Score blends save rate, resign volume, coupon effectiveness, lead generation, follow-through, consistency AND Saela Way behavior. Under 360 words. Do not wrap in a code fence.",
-        prompt: `Full history (${logs.length} calls):\n${JSON.stringify(logs, null, 2)}`,
+          "You are a retention analyst for SAELA PEST CONTROL producing an OVERALL PERFORMANCE REVIEW across the agent's entire logged history. Commission drivers: payments collected, signed resigns, leads sent to sales (bonus when sold), and — for managers — saves (a save means the customer committed to at least 2 more services); a subscription flagged pending cancel after 3 GEOC attempts should be escalated to a CEM. Grade the agent against the Saela Way customer-experience values: **building value**, **ownership**, **empathy**, **professionalism**, and **clear communication** — in addition to hard metrics. Use GitHub-flavored MARKDOWN with ## headings and - bullets. Sections REQUIRED: `## Trends over time` (month-over-month or week-over-week movement), `## Saela Way scorecard` (one bullet per value: building value, ownership, empathy, professionalism, communication — each with a short assessment and evidence from the notes), `## Strengths`, `## Weaknesses`, `## Coaching recommendations`, `## Recurring customer issues` (patterns from the supplied theme tally — what keeps driving cancellations and what to escalate). Then a final line exactly: `SCORE: <integer 0-100> — <one-line label>`. Score blends save rate, resign volume, coupon effectiveness, lead generation, follow-through, consistency AND Saela Way behavior. Under 360 words. Do not wrap in a code fence.",
+        prompt: `Full history (${logs.length} calls):\n${JSON.stringify(logs, null, 2)}\n\nRecurring customer-experience themes (last 30 days) — use these to explain WHY outcomes look the way they do:\n${themeSummary || "none detected"}`,
       }),
     ]);
 
@@ -803,7 +905,15 @@ export const createManualCallLog = createServerFn({ method: "POST" })
       .select()
       .single();
     if (error) throw new Error(error.message);
-    return row;
+    // Manual entries still get theme detection from whatever notes were typed.
+    const themes = detectThemes(`${data.raw_notes ?? ""}\n${data.summary ?? ""}`);
+    const alerts =
+      themes.length > 0
+        ? await saveThemesFor(context.supabase, context.userId, [
+            { row, analysis: { ...(AnalysisSchema.parse({ category: row.category, themes })) } },
+          ])
+        : [];
+    return { ...row, pattern_alerts: alerts };
   });
 
 // ---------- User settings (role) ----------
