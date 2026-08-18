@@ -308,8 +308,15 @@ function mergeHeuristics(a: Analysis, notes: string): Analysis {
     if (c !== "inquiry" && !merged.includes(c)) merged.push(c);
   }
   const real = merged.filter((c) => c !== "inquiry");
+  // Themes: keep everything the model found, and add keyword-detected themes it missed.
+  const modelThemes = a.themes ?? [];
+  const themes = [...modelThemes];
+  for (const t of detectThemes(notes)) {
+    if (!themes.some((m) => m.theme === t.theme)) themes.push(t);
+  }
   return {
     ...a,
+    themes,
     categories: real.length > 0 ? real : merged,
     category: (real.length > 0 ? real : merged)[0],
     needs_review: real.length === 0 && keywordCats.length === 0,
