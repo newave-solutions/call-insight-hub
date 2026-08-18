@@ -481,6 +481,37 @@ function resolveDate(userDate: string | null | undefined, detected: string | nul
   return { call_date: new Date().toISOString(), date_source: "auto" };
 }
 
+// Persist voice-of-customer themes for a saved call and return any recurring-issue alerts that
+// just crossed a threshold, so the UI can tell the agent while the call is still fresh.
+async function saveThemesFor(
+  supabase: Parameters<typeof recordThemes>[0],
+  userId: string,
+  entries: { row: { id: string; customer_id: string | null; call_date: string | null }; analysis: Analysis }[],
+) {
+  const payload = entries
+    .filter((e) => (e.analysis.themes ?? []).length > 0)
+    .map((e) => ({
+      callLogId: e.row.id,
+      customerId: e.row.customer_id,
+      occurredAt: e.row.call_date ?? new Date().toISOString(),
+      themes: (e.analysis.themes ?? []).map((t) => ({
+        theme: t.theme,
+        severity: t.severity ?? "mentioned",
+        is_cancel_driver: t.is_cancel_driver ?? false,
+        quote: t.quote ?? null,
+        entity_type: t.entity_type ?? null,
+        entity_name: t.entity_name ?? null,
+      })),
+    }));
+  if (payload.length === 0) return [];
+  try {
+    return await recordThemes(supabase, userId, payload);
+  } catch {
+    // Theme tracking must never block logging a call.
+    return [];
+  }
+}
+
 export const analyzeAndSaveCallLog = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
@@ -523,7 +554,8 @@ export const analyzeAndSaveCallLog = createServerFn({ method: "POST" })
       .single();
 
     if (error) throw new Error(error.message);
-    return row;
+    const alerts = await saveThemesFor(context.supabase, context.userId, [{ row, analysis: output }]);
+    return { ...row, pattern_alerts: alerts };
   });
 
 // Analyze only — no write. The UI can confirm ambiguous outcomes before anything is saved.
@@ -581,7 +613,8 @@ export const saveDraftCallLog = createServerFn({ method: "POST" })
       .select()
       .single();
     if (error) throw new Error(error.message);
-    return row;
+    const alerts = await saveThemesFor(context.supabase, context.userId, [{ row, analysis: output }]);
+    return { ...row, pattern_alerts: alerts };
   });
 
 export const bulkImportCallLogs = createServerFn({ method: "POST" })
@@ -645,7 +678,13 @@ export const bulkImportCallLogs = createServerFn({ method: "POST" })
 
     const { error, data: inserted } = await context.supabase.from("call_logs").insert(rows).select();
     if (error) throw new Error(error.message);
+    const bulkAlerts = await saveThemesFor(
+      context.supabase,
+      context.userId,
+      (inserted ?? []).map((row, idx) => ({ row, analysis: results[idx] })),
+    );
     return {
+      pattern_alerts: bulkAlerts,
       inserted: inserted?.length ?? 0,
       // Rows the parser could not classify — the UI walks the user through tagging them.
       review: (inserted ?? []).filter((r) => r.needs_review),
