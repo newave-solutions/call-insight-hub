@@ -14,6 +14,59 @@ export type Database = {
   }
   public: {
     Tables: {
+      call_log_themes: {
+        Row: {
+          call_log_id: string
+          created_at: string
+          customer_id: string | null
+          entity_name: string | null
+          entity_type: string | null
+          id: string
+          is_cancel_driver: boolean
+          occurred_at: string
+          quote: string | null
+          severity: string
+          theme: string
+          user_id: string
+        }
+        Insert: {
+          call_log_id: string
+          created_at?: string
+          customer_id?: string | null
+          entity_name?: string | null
+          entity_type?: string | null
+          id?: string
+          is_cancel_driver?: boolean
+          occurred_at?: string
+          quote?: string | null
+          severity?: string
+          theme: string
+          user_id: string
+        }
+        Update: {
+          call_log_id?: string
+          created_at?: string
+          customer_id?: string | null
+          entity_name?: string | null
+          entity_type?: string | null
+          id?: string
+          is_cancel_driver?: boolean
+          occurred_at?: string
+          quote?: string | null
+          severity?: string
+          theme?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "call_log_themes_call_log_id_fkey"
+            columns: ["call_log_id"]
+            isOneToOne: false
+            referencedRelation: "call_logs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       call_logs: {
         Row: {
           account_label: string | null
@@ -104,6 +157,45 @@ export type Database = {
           summary?: string | null
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      pattern_alerts: {
+        Row: {
+          alert_key: string
+          count: number
+          created_at: string
+          id: string
+          kind: string
+          payload: Json
+          status: string
+          updated_at: string
+          user_id: string
+          window_start: string
+        }
+        Insert: {
+          alert_key: string
+          count?: number
+          created_at?: string
+          id?: string
+          kind: string
+          payload?: Json
+          status?: string
+          updated_at?: string
+          user_id: string
+          window_start: string
+        }
+        Update: {
+          alert_key?: string
+          count?: number
+          created_at?: string
+          id?: string
+          kind?: string
+          payload?: Json
+          status?: string
+          updated_at?: string
+          user_id?: string
+          window_start?: string
         }
         Relationships: []
       }
