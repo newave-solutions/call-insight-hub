@@ -2572,3 +2572,209 @@ function ImportDialog({
     </Dialog>
   );
 }
+
+// ---------- Voice-of-customer watchlist ----------
+// Surfaces the "why" behind outcomes: which complaints keep coming back, which are actually
+// driving cancellations, and which named tech / branch keeps showing up in them.
+type AlertRow = {
+  id: string;
+  kind: string;
+  alert_key: string;
+  count: number;
+  status: string;
+  payload: unknown;
+};
+
+function Watchlist({
+  signals,
+  weekly,
+  alerts,
+  loading,
+  onAlertStatus,
+  onPickAccount,
+}: {
+  signals: PatternSignal[];
+  weekly: Record<string, string | number>[];
+  alerts: AlertRow[];
+  loading: boolean;
+  onAlertStatus: (id: string, status: "ack" | "muted" | "resolved") => void;
+  onPickAccount: (customerId: string) => void;
+}) {
+  const [openTheme, setOpenTheme] = useState<string | null>(null);
+  const top = signals.slice(0, 6);
+  const openAlerts = alerts.filter((a) => a.status === "open");
+
+  const stackKeys = useMemo(
+    () => top.map((s) => s.theme).filter((t) => weekly.some((w) => w[t] !== undefined)),
+    [top, weekly],
+  );
+  const palette = ["#f43f5e", "#f97316", "#f59e0b", "#8b5cf6", "#0ea5e9", "#10b981"];
+
+  return (
+    <div className="rounded-xl border bg-card shadow-sm">
+      <div className="flex items-center gap-2 border-b px-3 py-2">
+        <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Watchlist — recurring customer issues
+        </h2>
+        <span className="text-[10px] text-muted-foreground/70">last 30 days</span>
+        {openAlerts.length > 0 && (
+          <Badge className="ml-auto h-5 bg-amber-500/15 px-1.5 text-[10px] text-amber-700 hover:bg-amber-500/15">
+            {openAlerts.length} flagged
+          </Badge>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="p-6 text-center text-xs text-muted-foreground">Scanning your calls for patterns…</div>
+      ) : signals.length === 0 ? (
+        <div className="p-6 text-center text-xs text-muted-foreground">
+          No recurring themes yet. As you log calls, repeated complaints (upsell pressure, price hikes, a
+          specific tech) get tracked here automatically.
+        </div>
+      ) : (
+        <div className="grid gap-3 p-3 lg:grid-cols-[1.3fr_1fr]">
+          {/* Ranked themes */}
+          <div className="space-y-1.5">
+            {top.map((s) => {
+              const isOpen = openTheme === s.theme;
+              return (
+                <div key={s.theme} className="rounded-lg border bg-background/60">
+                  <button
+                    type="button"
+                    onClick={() => setOpenTheme(isOpen ? null : s.theme)}
+                    className="flex w-full items-center gap-2 px-2.5 py-2 text-left"
+                  >
+                    <span className="text-xs font-medium">{s.label}</span>
+                    {s.cancelDrivers > 0 && (
+                      <Badge className="h-4 bg-rose-500/15 px-1.5 text-[9px] text-rose-600 hover:bg-rose-500/15">
+                        {s.cancelDrivers} cancel driver{s.cancelDrivers === 1 ? "" : "s"}
+                      </Badge>
+                    )}
+                    {s.trend === "up" && (
+                      <span className="flex items-center gap-0.5 text-[9px] font-semibold text-rose-600">
+                        <ArrowUp className="h-3 w-3" />rising
+                      </span>
+                    )}
+                    <span className="ml-auto text-xs font-semibold tabular-nums">{s.count30}</span>
+                    <span className="text-[9px] text-muted-foreground">
+                      vs {s.countPrev30} prior 30d
+                    </span>
+                  </button>
+                  {isOpen && (
+                    <div className="space-y-2 border-t px-2.5 py-2">
+                      {THEME_META[s.theme as keyof typeof THEME_META]?.hint && (
+                        <p className="text-[10px] text-muted-foreground">
+                          {THEME_META[s.theme as keyof typeof THEME_META].hint}
+                        </p>
+                      )}
+                      {s.quotes.map((q, i) => (
+                        <p key={i} className="border-l-2 border-muted pl-2 text-[11px] italic text-muted-foreground">
+                          “{q}”
+                        </p>
+                      ))}
+                      {s.entities.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="text-[9px] uppercase text-muted-foreground">Named:</span>
+                          {s.entities.slice(0, 5).map((e) => (
+                            <Badge key={e.name} variant="secondary" className="h-4 px-1.5 text-[9px]">
+                              {e.name} ×{e.count}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                      {s.accounts.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="text-[9px] uppercase text-muted-foreground">Accounts:</span>
+                          {s.accounts.map((a) => (
+                            <button
+                              key={a}
+                              type="button"
+                              onClick={() => onPickAccount(a)}
+                              className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-mono hover:bg-muted/70"
+                            >
+                              {a}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Trend + flagged alerts */}
+          <div className="space-y-2">
+            {stackKeys.length > 0 && (
+              <div className="rounded-lg border bg-background/60 p-2">
+                <p className="mb-1 text-[10px] font-medium uppercase text-muted-foreground">
+                  Issue mentions per week
+                </p>
+                <ResponsiveContainer width="100%" height={130}>
+                  <BarChart data={weekly} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.25} />
+                    <XAxis dataKey="week" tick={{ fontSize: 9 }} />
+                    <YAxis tick={{ fontSize: 9 }} allowDecimals={false} />
+                    <Tooltip contentStyle={{ fontSize: 11 }} />
+                    {stackKeys.map((k, i) => (
+                      <Bar key={k} dataKey={k} stackId="t" name={themeLabel(k)} fill={palette[i % palette.length]} />
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {openAlerts.length > 0 && (
+              <div className="space-y-1.5">
+                {openAlerts.slice(0, 4).map((a) => {
+                  const payload = (a.payload ?? {}) as { label?: string; hint?: string };
+                  return (
+                    <div
+                      key={a.id}
+                      className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-2.5 py-2"
+                    >
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                        <div className="flex-1">
+                          <p className="text-[11px] font-medium">
+                            {payload.label ?? a.alert_key}
+                            <span className="ml-1 text-muted-foreground">×{a.count}</span>
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {a.kind === "account"
+                              ? "Same account raised this on multiple calls — at-risk."
+                              : a.kind === "entity"
+                                ? "Repeatedly named in service complaints — worth coaching."
+                                : (payload.hint ?? "Recurring theme across your calls.")}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 gap-1">
+                          <button
+                            type="button"
+                            onClick={() => onAlertStatus(a.id, "ack")}
+                            className="rounded border px-1.5 py-0.5 text-[9px] hover:bg-background"
+                          >
+                            Noted
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onAlertStatus(a.id, "muted")}
+                            className="rounded border px-1.5 py-0.5 text-[9px] text-muted-foreground hover:bg-background"
+                          >
+                            Mute
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
