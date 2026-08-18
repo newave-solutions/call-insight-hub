@@ -432,6 +432,7 @@ function heuristicExtract(notes: string): Analysis {
     price_per_service: price ? Number(price) : null,
     summary: notes.slice(0, 400),
     key_points: [],
+    themes: detectThemes(notes),
     // Nothing explicit matched — ask the user to confirm the tags.
     needs_review: !matched,
   });
