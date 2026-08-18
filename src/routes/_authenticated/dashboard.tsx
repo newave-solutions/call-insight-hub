@@ -14,7 +14,7 @@ import {
   setUserRole,
   updateCallLog,
 } from "@/lib/call-logs.functions";
-import { listPatternSignals, updateAlertStatus, type PatternSignal } from "@/lib/patterns.functions";
+import { backfillThemes, listPatternSignals, updateAlertStatus, type PatternSignal } from "@/lib/patterns.functions";
 import { THEME_META, themeLabel } from "@/lib/themes";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -331,6 +331,19 @@ function Dashboard() {
     queryKey: ["patterns", logs.length],
     queryFn: () => patternsFn(),
     staleTime: 60_000,
+  });
+  const backfillFn = useServerFn(backfillThemes);
+  const backfillMut = useMutation({
+    mutationFn: () => backfillFn(),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["patterns"] });
+      toast.success(
+        res.tagged > 0
+          ? `Found issue themes in ${res.tagged} past call${res.tagged === 1 ? "" : "s"}`
+          : "No recurring themes found in past calls",
+      );
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Scan failed"),
   });
   const alertMut = useMutation({
     mutationFn: (input: { id: string; status: "ack" | "muted" | "resolved" }) =>
@@ -909,6 +922,8 @@ function Dashboard() {
             alerts={patternsQuery.data?.alerts ?? []}
             loading={patternsQuery.isLoading}
             onAlertStatus={(id, status) => alertMut.mutate({ id, status })}
+            onScanPast={() => backfillMut.mutate()}
+            scanning={backfillMut.isPending}
             onPickAccount={(id) => {
               setQuery(id);
               setDayFilter(null);
@@ -2592,11 +2607,15 @@ function Watchlist({
   loading,
   onAlertStatus,
   onPickAccount,
+  onScanPast,
+  scanning,
 }: {
   signals: PatternSignal[];
   weekly: Record<string, string | number>[];
   alerts: AlertRow[];
   loading: boolean;
+  onScanPast: () => void;
+  scanning: boolean;
   onAlertStatus: (id: string, status: "ack" | "muted" | "resolved") => void;
   onPickAccount: (customerId: string) => void;
 }) {
@@ -2618,8 +2637,16 @@ function Watchlist({
           Watchlist — recurring customer issues
         </h2>
         <span className="text-[10px] text-muted-foreground/70">last 30 days</span>
+        <button
+          type="button"
+          onClick={onScanPast}
+          disabled={scanning}
+          className="ml-auto text-[10px] text-muted-foreground hover:text-foreground"
+        >
+          {scanning ? "Scanning…" : "Scan past calls"}
+        </button>
         {openAlerts.length > 0 && (
-          <Badge className="ml-auto h-5 bg-amber-500/15 px-1.5 text-[10px] text-amber-700 hover:bg-amber-500/15">
+          <Badge className="h-5 bg-amber-500/15 px-1.5 text-[10px] text-amber-700 hover:bg-amber-500/15">
             {openAlerts.length} flagged
           </Badge>
         )}
@@ -2628,9 +2655,14 @@ function Watchlist({
       {loading ? (
         <div className="p-6 text-center text-xs text-muted-foreground">Scanning your calls for patterns…</div>
       ) : signals.length === 0 ? (
-        <div className="p-6 text-center text-xs text-muted-foreground">
-          No recurring themes yet. As you log calls, repeated complaints (upsell pressure, price hikes, a
-          specific tech) get tracked here automatically.
+        <div className="space-y-2 p-6 text-center text-xs text-muted-foreground">
+          <p>
+            No recurring themes yet. As you log calls, repeated complaints (upsell pressure, price hikes, a
+            specific tech) get tracked here automatically.
+          </p>
+          <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={onScanPast} disabled={scanning}>
+            {scanning ? "Scanning…" : "Scan my past calls"}
+          </Button>
         </div>
       ) : (
         <div className="grid gap-3 p-3 lg:grid-cols-[1.3fr_1fr]">

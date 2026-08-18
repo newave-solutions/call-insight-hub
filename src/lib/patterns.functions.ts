@@ -117,3 +117,37 @@ export const updateAlertStatus = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return { ok: true };
   });
+
+// One-time (repeatable) scan of already-logged calls so the watchlist has history to work with.
+// Deterministic detector only — no AI cost.
+export const backfillThemes = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { detectThemes } = await import("./themes");
+    const { recordThemes } = await import("./patterns.server");
+
+    const [{ data: logs, error }, { data: done }] = await Promise.all([
+      context.supabase
+        .from("call_logs")
+        .select("id,raw_notes,summary,customer_id,call_date,created_at")
+        .order("call_date", { ascending: false, nullsFirst: false })
+        .limit(1000),
+      context.supabase.from("call_log_themes").select("call_log_id"),
+    ]);
+    if (error) throw new Error(error.message);
+    const already = new Set((done ?? []).map((d) => d.call_log_id));
+
+    const entries = (logs ?? [])
+      .filter((l) => !already.has(l.id))
+      .map((l) => ({
+        callLogId: l.id,
+        customerId: l.customer_id,
+        occurredAt: l.call_date ?? l.created_at,
+        themes: detectThemes(`${l.raw_notes ?? ""}\n${l.summary ?? ""}`),
+      }))
+      .filter((e) => e.themes.length > 0);
+
+    if (entries.length === 0) return { scanned: logs?.length ?? 0, tagged: 0 };
+    await recordThemes(context.supabase, context.userId, entries);
+    return { scanned: logs?.length ?? 0, tagged: entries.length };
+  });
