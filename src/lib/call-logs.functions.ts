@@ -3,6 +3,8 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { generateObject, generateText, NoObjectGeneratedError } from "ai";
 import { z } from "zod";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
+import { THEME_VALUES, SEVERITY_VALUES, ENTITY_TYPES, THEME_META, detectThemes, themeLabel } from "./themes";
+import { recordThemes } from "./patterns.server";
 
 export const CATEGORY_VALUES = [
   "saved", "closed", "resign", "reactivation", "lead", "cancel_pending", "pending_cancel",
@@ -45,6 +47,21 @@ const AnalysisSchema = z.object({
   detected_date: z.string().nullish().default(null),
   // True when neither the model nor the keyword parser could confidently classify the call.
   needs_review: z.boolean().nullish().default(false),
+  // Voice-of-customer themes: WHY the customer called / why they want to leave, from a fixed
+  // vocabulary so recurring issues can be counted across calls.
+  themes: z
+    .array(
+      z.object({
+        theme: z.enum(THEME_VALUES),
+        severity: z.enum(SEVERITY_VALUES).nullish().default("mentioned"),
+        is_cancel_driver: z.boolean().nullish().default(false),
+        quote: z.string().nullish().default(null),
+        entity_type: z.enum(ENTITY_TYPES).nullish().default(null),
+        entity_name: z.string().nullish().default(null),
+      }),
+    )
+    .nullish()
+    .default([]),
 });
 
 type Analysis = z.infer<typeof AnalysisSchema>;
