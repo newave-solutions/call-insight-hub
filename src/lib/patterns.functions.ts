@@ -117,26 +117,3 @@ export const updateAlertStatus = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return { ok: true };
   });
-
-// Everything already known about one account, so the agent walks into a repeat call informed.
-export const getAccountHistory = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => z.object({ customerId: z.string().min(1) }).parse(input))
-  .handler(async ({ data, context }) => {
-    const [{ data: logs }, { data: themes }] = await Promise.all([
-      context.supabase
-        .from("call_logs")
-        .select("id,call_date,created_at,categories,category,summary,coupon,coupon_amount,price_per_service,agreement_length_months,payment_amount,follow_up_needed")
-        .eq("customer_id", data.customerId)
-        .order("call_date", { ascending: false, nullsFirst: false })
-        .limit(50),
-      context.supabase
-        .from("call_log_themes")
-        .select("theme,severity,is_cancel_driver,quote,occurred_at")
-        .eq("customer_id", data.customerId)
-        .order("occurred_at", { ascending: false })
-        .limit(50),
-    ]);
-    const totalDiscount = (logs ?? []).reduce((s, l) => s + (l.coupon_amount ?? 0), 0);
-    return { logs: logs ?? [], themes: themes ?? [], totalDiscount, callCount: (logs ?? []).length };
-  });

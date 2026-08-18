@@ -14,6 +14,8 @@ import {
   setUserRole,
   updateCallLog,
 } from "@/lib/call-logs.functions";
+import { listPatternSignals, updateAlertStatus, type PatternSignal } from "@/lib/patterns.functions";
+import { THEME_META, themeLabel } from "@/lib/themes";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -247,10 +249,11 @@ function Dashboard() {
     mutationFn: async (input: { notes: string; callDate: string }) => {
       const draft = await analyzeFn({ data: { notes: input.notes } });
       if (draft.needs_review) return { pending: { ...input, draft } } as const;
-      await saveDraftFn({ data: { notes: input.notes, callDate: input.callDate, draft } });
-      return { pending: null } as const;
+      const saved = await saveDraftFn({ data: { notes: input.notes, callDate: input.callDate, draft } });
+      return { pending: null, alerts: saved.pattern_alerts } as const;
     },
     onSuccess: (res) => {
+      surfaceAlerts(res.alerts);
       if (res.pending) {
         setConfirmDraft(res.pending);
         return;
@@ -268,7 +271,8 @@ function Dashboard() {
   const confirmSaveMut = useMutation({
     mutationFn: (input: { notes: string; callDate: string; draft: Draft }) =>
       saveDraftFn({ data: { notes: input.notes, callDate: input.callDate, draft: { ...input.draft, needs_review: false } } }),
-    onSuccess: () => {
+    onSuccess: (res) => {
+      surfaceAlerts(res.pattern_alerts);
       setConfirmDraft(null);
       setNotes("");
       setCallDate(new Date());
@@ -286,6 +290,7 @@ function Dashboard() {
       qc.invalidateQueries({ queryKey: ["call_logs"] });
       qc.invalidateQueries({ queryKey: ["insights"] });
       toast.success(`Imported ${res.inserted} call${res.inserted === 1 ? "" : "s"}`);
+      surfaceAlerts(res.pattern_alerts);
       setUploadOpen(false);
       if (res.review.length > 0) {
         setReviewQueue(res.review.map((r) => r.id));
@@ -320,9 +325,30 @@ function Dashboard() {
     onError: (e) => toast.error(e instanceof Error ? e.message : "Save failed"),
   });
 
+  const patternsFn = useServerFn(listPatternSignals);
+  const alertStatusFn = useServerFn(updateAlertStatus);
+  const patternsQuery = useQuery({
+    queryKey: ["patterns", logs.length],
+    queryFn: () => patternsFn(),
+    staleTime: 60_000,
+  });
+  const alertMut = useMutation({
+    mutationFn: (input: { id: string; status: "ack" | "muted" | "resolved" }) =>
+      alertStatusFn({ data: input }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["patterns"] }),
+  });
+
+  // Recurring-issue alerts that crossed a threshold on the call that was just logged.
+  function surfaceAlerts(alerts?: { message: string }[] | null) {
+    for (const a of alerts ?? []) {
+      toast.warning("Pattern detected", { description: a.message, duration: 9000 });
+    }
+    if ((alerts ?? []).length > 0) qc.invalidateQueries({ queryKey: ["patterns"] });
+  }
+
   const insightsQuery = useQuery({
     queryKey: ["insights", logs.length],
-    queryFn: () => insightsFn(),
+    queryFn: () => insightsFn({ data: { todayKey: toDayKey(new Date()) } }),
     enabled: logs.length > 0,
     staleTime: 60_000,
   });
@@ -873,6 +899,21 @@ function Dashboard() {
               </>
             )}
           </ChartCard>
+        </section>
+
+        {/* Recurring customer issues the agent might otherwise miss */}
+        <section className="mt-3">
+          <Watchlist
+            signals={patternsQuery.data?.signals ?? []}
+            weekly={patternsQuery.data?.weekly ?? []}
+            alerts={patternsQuery.data?.alerts ?? []}
+            loading={patternsQuery.isLoading}
+            onAlertStatus={(id, status) => alertMut.mutate({ id, status })}
+            onPickAccount={(id) => {
+              setQuery(id);
+              setDayFilter(null);
+            }}
+          />
         </section>
 
         {/* Daily briefing */}
