@@ -79,12 +79,14 @@ const CANCEL_DRIVER_NEARBY =
 const FRUSTRATED =
   /\b(frustrat\w*|upset|angry|mad|furious|fed up|tired of|annoyed|complain\w*|unacceptable|ridiculous)\b/i;
 
+export type EntityType = (typeof ENTITY_TYPES)[number];
+
 export type DetectedTheme = {
   theme: Theme;
   severity: Severity;
   is_cancel_driver: boolean;
   quote: string | null;
-  entity_type: string | null;
+  entity_type: EntityType | null;
   entity_name: string | null;
 };
 
