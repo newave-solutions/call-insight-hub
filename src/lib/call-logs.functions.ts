@@ -881,7 +881,15 @@ export const createManualCallLog = createServerFn({ method: "POST" })
       .select()
       .single();
     if (error) throw new Error(error.message);
-    return row;
+    // Manual entries still get theme detection from whatever notes were typed.
+    const themes = detectThemes(`${data.raw_notes ?? ""}\n${data.summary ?? ""}`);
+    const alerts =
+      themes.length > 0
+        ? await saveThemesFor(context.supabase, context.userId, [
+            { row, analysis: { ...(AnalysisSchema.parse({ category: row.category, themes })) } },
+          ])
+        : [];
+    return { ...row, pattern_alerts: alerts };
   });
 
 // ---------- User settings (role) ----------
