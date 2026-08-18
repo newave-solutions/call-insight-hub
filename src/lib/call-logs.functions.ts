@@ -254,6 +254,20 @@ Set follow_up_needed = false for ALL of these (they are normal work, not follow-
 
 If follow_up_needed is false, follow_up_notes must be null.
 
+THEMES — WHY the customer called / why they are leaving (voice of customer):
+Separately from the outcome, return every applicable theme so recurring problems can be counted
+across calls. Use ONLY these theme keys:
+${Object.entries(THEME_META).map(([k, v]) => `- ${k}: ${v.hint}`).join("\n")}
+For each theme return:
+- severity: "mentioned" (stated in passing), "frustrated" (clearly upset about it), or
+  "cancel_driver" (this is the reason they want to cancel / did cancel).
+- is_cancel_driver: true only when this theme is the stated reason for cancelling or wanting to.
+- quote: a SHORT verbatim phrase from the notes that proves the theme (max ~25 words). Never invent.
+- entity_type + entity_name when the notes name a person, branch, route, or plan tied to the
+  complaint (e.g. tech "Jose", "Kansas East" route). Leave both null when nothing is named.
+Themes are about the customer's experience and reasons, NOT about the outcome. A call can have
+zero themes (return []) — do not force one. Do not invent a theme from an agent action.
+
 Return JSON matching the schema exactly. Use null for missing text; 0 for coupon_amount when no discount; false for follow_up_needed when nothing is truly pending.`;
 
 async function runExtraction(notes: string): Promise<Analysis> {
