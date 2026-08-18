@@ -168,10 +168,10 @@ async function upsertAlert(
   if (!existing) {
     await supabase
       .from("pattern_alerts")
-      .insert({ user_id: userId, kind, alert_key: alertKey, window_start: windowStart, count, payload, status: "open" });
+      .insert({ user_id: userId, kind, alert_key: alertKey, window_start: windowStart, count, payload: payload as never, status: "open" });
     return true;
   }
-  await supabase.from("pattern_alerts").update({ count, payload }).eq("id", existing.id);
+  await supabase.from("pattern_alerts").update({ count, payload: payload as never }).eq("id", existing.id);
   // Only re-surface acknowledged alerts when the count actually grew; never re-surface muted ones.
   return existing.status === "open" || (existing.status === "ack" && count > (existing.count ?? 0));
 }
