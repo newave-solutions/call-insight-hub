@@ -92,6 +92,7 @@ import {
   CreditCard,
   UserCog,
   AlertTriangle,
+  Bug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -102,6 +103,7 @@ import {
 } from "@/lib/role-policy";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import pestMotif from "@/assets/pest-motif.jpg";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   component: Dashboard,
@@ -775,7 +777,7 @@ function Dashboard() {
 
         {/* Composer + charts */}
         <section className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-          <div className="rounded-xl border bg-card p-3 shadow-sm">
+          <div className="panel rounded-xl p-3 shadow-lg shadow-black/20">
             <div className="mb-1.5 flex items-center justify-between">
               <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 <Sparkles className="h-3.5 w-3.5 text-primary" /> Log a call
@@ -1053,7 +1055,7 @@ function Dashboard() {
 
         {/* Call log — one day at a time */}
         <section className="mt-3">
-          <div className="rounded-xl border bg-card shadow-sm">
+          <div className="panel rounded-xl shadow-lg shadow-black/20">
             <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
               <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {dayFilter ? (isToday(dayFilter) ? "Today's calls" : format(dayFilter, "EEE, MMM d")) : "All calls"}
@@ -1702,7 +1704,7 @@ function DailyBriefing({ content, loading, empty }: { content: string; loading: 
 
   return (
     <div
-      className="rounded-xl border bg-card p-3 shadow-sm"
+      className="panel rounded-xl p-3 shadow-lg shadow-black/20"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
     >
@@ -2864,7 +2866,7 @@ function Watchlist({
   const palette = ["#f43f5e", "#f97316", "#f59e0b", "#8b5cf6", "#0ea5e9", "#10b981"];
 
   return (
-    <div className="rounded-xl border bg-card shadow-sm">
+    <div className="panel rounded-xl shadow-lg shadow-black/20">
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
         <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
