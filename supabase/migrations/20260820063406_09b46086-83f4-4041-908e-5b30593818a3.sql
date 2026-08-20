@@ -1,0 +1,1 @@
+ALTER TABLE public.call_logs DROP CONSTRAINT IF EXISTS call_logs_category_check;
