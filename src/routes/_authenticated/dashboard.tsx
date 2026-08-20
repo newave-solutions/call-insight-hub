@@ -952,14 +952,15 @@ function Dashboard() {
                     tick={{ fontSize: 10 }}
                   />
                   <YAxis
-                    dataKey="hour"
+                    dataKey="seq"
                     type="number"
-                    domain={[6, 21]}
-                    ticks={[6, 9, 12, 15, 18, 21]}
-                    tickFormatter={(h: number) => (h === 12 ? "12p" : h > 12 ? `${h - 12}p` : `${h}a`)}
+                    domain={[0, (max: number) => Math.max(4, max + 1)]}
+                    allowDecimals={false}
                     tick={{ fontSize: 10 }}
-                    width={32}
+                    width={26}
+                    label={{ value: "call #", angle: -90, position: "insideLeft", fontSize: 9, fill: "var(--muted-foreground)" }}
                   />
+
                   <ZAxis range={[46, 46]} />
                   <Tooltip
                     cursor={{ strokeDasharray: "3 3" }}
