@@ -493,7 +493,8 @@ function Dashboard() {
     [monthSeries],
   );
 
-  // ONE DOT PER CALL: x = day (index over the last 30 days), y = time of day the call was logged.
+  // ONE DOT PER CALL: x = day (index over the last 30 days), y = the call's position in that day,
+  // so every single logged call is its own visible point instead of collapsing onto a daily total.
   const callPoints = useMemo(() => {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
@@ -501,7 +502,7 @@ function Dashboard() {
     const points: {
       id: string;
       idx: number;
-      hour: number;
+      seq: number;
       date: string;
       dayLabel: string;
       timeLabel: string;
@@ -509,20 +510,25 @@ function Dashboard() {
       fill: string;
       customer: string;
     }[] = [];
-    for (const l of logs) {
+    const seqByDay = new Map<string, number>();
+    const ordered = [...logs].sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    );
+    for (const l of ordered) {
       const day = new Date(l.call_date ?? l.created_at);
       const dayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate());
       const idx = Math.round((dayStart.getTime() - start.getTime()) / 86400000);
       if (idx < 0 || idx > 29) continue;
-      // call_date is a date-only field; use created_at for the clock position.
+      const key = toDayKey(dayStart);
+      const seq = (seqByDay.get(key) ?? 0) + 1;
+      seqByDay.set(key, seq);
       const clock = new Date(l.created_at);
-      const hour = clock.getHours() + clock.getMinutes() / 60;
       const cat = (logCategories(l)[0] ?? "other") as Category;
       points.push({
         id: l.id,
         idx,
-        hour: Math.round(hour * 100) / 100,
-        date: toDayKey(dayStart),
+        seq,
+        date: key,
         dayLabel: dayStart.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
         timeLabel: clock.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
         cat,
@@ -532,6 +538,7 @@ function Dashboard() {
     }
     return points;
   }, [logs]);
+
 
   // Dots grouped by outcome so each outcome becomes its own colored Scatter series.
   const callPointSeries = useMemo(() => {
