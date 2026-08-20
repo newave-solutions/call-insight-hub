@@ -783,7 +783,7 @@ function Dashboard() {
         <CommissionStrip role={role} stats={stats} />
 
         {/* Composer + charts */}
-        <section className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+        <section className="mt-4 grid items-start gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
           <div className="panel rounded-xl p-3 shadow-lg shadow-black/20">
             <div className="mb-1.5 flex items-center justify-between">
               <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
