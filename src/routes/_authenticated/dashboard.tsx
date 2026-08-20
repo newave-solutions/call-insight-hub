@@ -693,17 +693,34 @@ function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur">
+    <div className="console-grid relative min-h-screen">
+      {/* Pest-control motif watermark anchored to the bottom of the console */}
+      <img
+        src={pestMotif}
+        alt=""
+        aria-hidden="true"
+        loading="lazy"
+        width={1536}
+        height={768}
+        className="pointer-events-none fixed inset-x-0 bottom-0 -z-10 h-[42vh] w-full select-none object-cover opacity-[0.16] mix-blend-luminosity"
+      />
+      <header className="sticky top-0 z-10 border-b border-border/60 bg-[color:var(--brand-deep)]/85 backdrop-blur-md">
         <div className="mx-auto grid max-w-[1400px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-2.5 sm:px-6">
-          <div className="flex min-w-0 items-center gap-2">
-            <div className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground">
-              <PhoneCall className="h-3.5 w-3.5" />
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground shadow-md shadow-primary/25">
+              <Bug className="h-4 w-4" />
             </div>
-            <span className="truncate text-sm font-semibold tracking-tight">CallInsight</span>
-            <span className="ml-2 hidden text-xs text-muted-foreground sm:inline">
-              {ROLE_DEFINITIONS[role].tagline}
-            </span>
+            <div className="min-w-0 leading-tight">
+              <div className="flex items-baseline gap-1.5">
+                <span className="font-display truncate text-[15px] font-semibold tracking-tight">Saela</span>
+                <span className="truncate text-[11px] uppercase tracking-[0.22em] text-[color:var(--signal)]">
+                  Retention Console
+                </span>
+              </div>
+              <span className="hidden truncate text-[11px] text-muted-foreground sm:block">
+                {ROLE_DEFINITIONS[role].tagline}
+              </span>
+            </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <RoleSwitcher
@@ -711,8 +728,8 @@ function Dashboard() {
               onChange={(r) => roleMut.mutate(r)}
               saving={roleMut.isPending}
             />
-            <span className="hidden items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground sm:inline-flex">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> live
+            <span className="hidden items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] text-primary sm:inline-flex">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" /> live
             </span>
             <Button variant="ghost" size="sm" onClick={handleSignOut}>
               <LogOut className="h-4 w-4 sm:mr-1.5" />
@@ -720,9 +737,11 @@ function Dashboard() {
             </Button>
           </div>
         </div>
+        <div className="brand-rule h-px w-full" />
       </header>
 
       <main className="mx-auto max-w-[1400px] px-4 py-4 sm:px-6">
+
         {/* KPI strip — the outcomes that matter for the active role */}
         <section className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
           {KPI_BY_ROLE[role].map((c) => (
