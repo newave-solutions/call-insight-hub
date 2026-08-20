@@ -18,7 +18,7 @@ export type PatternSignal = {
 export const listPatternSignals = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const { themeLabel } = await import("./themes");
+    const { themeLabel, canonicalTheme } = await import("./themes");
     const now = Date.now();
     const since = new Date(now - 120 * 86400000).toISOString();
 
@@ -41,12 +41,15 @@ export const listPatternSignals = createServerFn({ method: "GET" })
     const t30 = now - 30 * 86400000;
     const t60 = now - 60 * 86400000;
 
+    // Fold legacy theme keys into the current cancellation-reason vocabulary so history counts.
     const byTheme = new Map<string, typeof rows>();
     for (const r of rows) {
-      const list = byTheme.get(r.theme) ?? [];
+      const key = canonicalTheme(r.theme) ?? r.theme;
+      const list = byTheme.get(key) ?? [];
       list.push(r);
-      byTheme.set(r.theme, list);
+      byTheme.set(key, list);
     }
+
 
     const signals: PatternSignal[] = [...byTheme.entries()]
       .map(([theme, list]) => {

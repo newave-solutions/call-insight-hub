@@ -491,6 +491,97 @@ function Dashboard() {
     [monthSeries],
   );
 
+  // ONE DOT PER CALL: x = day (index over the last 30 days), y = time of day the call was logged.
+  const callPoints = useMemo(() => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - 29);
+    const points: {
+      id: string;
+      idx: number;
+      hour: number;
+      date: string;
+      dayLabel: string;
+      timeLabel: string;
+      cat: Category;
+      fill: string;
+      customer: string;
+    }[] = [];
+    for (const l of logs) {
+      const day = new Date(l.call_date ?? l.created_at);
+      const dayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+      const idx = Math.round((dayStart.getTime() - start.getTime()) / 86400000);
+      if (idx < 0 || idx > 29) continue;
+      // call_date is a date-only field; use created_at for the clock position.
+      const clock = new Date(l.created_at);
+      const hour = clock.getHours() + clock.getMinutes() / 60;
+      const cat = (logCategories(l)[0] ?? "other") as Category;
+      points.push({
+        id: l.id,
+        idx,
+        hour: Math.round(hour * 100) / 100,
+        date: toDayKey(dayStart),
+        dayLabel: dayStart.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+        timeLabel: clock.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
+        cat,
+        fill: CATEGORY_META[cat]?.hex ?? CATEGORY_META.other.hex,
+        customer: l.customer_name ?? l.customer_id ?? "Unknown",
+      });
+    }
+    return points;
+  }, [logs]);
+
+  // Dots grouped by outcome so each outcome becomes its own colored Scatter series.
+  const callPointSeries = useMemo(() => {
+    const groups = new Map<Category, typeof callPoints>();
+    for (const p of callPoints) {
+      const arr = groups.get(p.cat) ?? [];
+      arr.push(p);
+      groups.set(p.cat, arr);
+    }
+    return Array.from(groups.entries()).sort((a, b) => b[1].length - a[1].length);
+  }, [callPoints]);
+
+  // Month-to-date retention performance against the 30% floor we're held to.
+  const mtd = useMemo(() => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(1);
+    const t = {
+      saved: 0, closed: 0, resign: 0, reactivation: 0, lead: 0,
+      cancelPending: 0, pendingCancel: 0,
+      reschedule: 0, reservice: 0, payment: 0, billing: 0, refund: 0,
+      coupons: 0, couponCount: 0, payments: 0, refunds: 0, calls: 0,
+    };
+    for (const l of logs) {
+      const d = new Date(l.call_date ?? l.created_at);
+      if (d < start) continue;
+      t.calls += 1;
+      for (const c of logCategories(l)) {
+        if (c === "saved") t.saved += 1;
+        else if (c === "closed") t.closed += 1;
+        else if (c === "resign") t.resign += 1;
+        else if (c === "reactivation") t.reactivation += 1;
+        else if (c === "lead") t.lead += 1;
+        else if (c === "cancel_pending") t.cancelPending += 1;
+        else if (c === "pending_cancel") t.pendingCancel += 1;
+        else if (c === "reschedule") t.reschedule += 1;
+        else if (c === "reservice") t.reservice += 1;
+        else if (c === "payment") t.payment += 1;
+        else if (c === "billing_update") t.billing += 1;
+        else if (c === "refund") t.refund += 1;
+      }
+      if (l.coupon_amount) t.coupons += Number(l.coupon_amount);
+      if (l.coupon || l.coupon_amount) t.couponCount += 1;
+      if (l.payment_amount) t.payments += Number(l.payment_amount);
+      if (l.refund_amount) t.refunds += Number(l.refund_amount);
+    }
+    const attempts = t.saved + t.resign + t.reactivation + t.closed;
+    const rate = attempts ? Math.round(((t.saved + t.resign + t.reactivation) / attempts) * 100) : 0;
+    return { ...t, attempts, rate };
+  }, [logs]);
+
+
   // Which weekdays produce wins vs. losses over the last 30 days.
   const dowSeries = useMemo(() => {
     const labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -756,7 +847,7 @@ function Dashboard() {
               <ChartCard title="Retention outcomes (14d)">
                 <ResponsiveContainer width="100%" height={120}>
                   <BarChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
-                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
                     <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
                     <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
                     <Tooltip contentStyle={{ fontSize: 11 }} />
@@ -771,7 +862,7 @@ function Dashboard() {
               <ChartCard title="Payments vs refunds $ / day (14d)">
                 <ResponsiveContainer width="100%" height={120}>
                   <BarChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
-                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
                     <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
                     <YAxis tick={{ fontSize: 10 }} width={28} />
                     <Tooltip contentStyle={{ fontSize: 11 }} />
@@ -803,29 +894,15 @@ function Dashboard() {
               )}
             </ChartCard>
 
-            <ChartCard title="Discount $ / day (14d)">
-              <ResponsiveContainer width="100%" height={120}>
-                <LineChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
-                  <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
-                  <YAxis tick={{ fontSize: 10 }} width={28} />
-                  <Tooltip contentStyle={{ fontSize: 11 }} />
-                  <Line type="monotone" dataKey="coupons" stroke="#a855f7" strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
-              <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
-                <span className="flex items-center gap-1.5"><Ticket className="h-3 w-3" /> Coupons used: {stats.couponsUsed}</span>
-                <span>Total: ${stats.couponTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-              </div>
-            </ChartCard>
+            {/* Month-to-date scoreboard: the 30% retention floor, or the CES workload board */}
+            {role === "cem" ? (
+              <RetentionGoalCard mtd={mtd} followUps={stats.followUps} />
+            ) : (
+              <ServiceBoardCard mtd={mtd} followUps={stats.followUps} />
+            )}
 
-            <ChartCard title="Follow-ups">
-              <div className="flex h-[120px] flex-col items-center justify-center gap-1">
-                <BellRing className="h-5 w-5 text-amber-500" />
-                <div className="text-3xl font-semibold tabular-nums">{stats.followUps}</div>
-                <div className="text-[11px] text-muted-foreground">calls need follow-up</div>
-              </div>
-            </ChartCard>
+            <MoneyBoardCard mtd={mtd} role={role} />
+
           </div>
         </section>
 
@@ -834,7 +911,7 @@ function Dashboard() {
           <ChartCard title="Calls logged per day (last 30 days)">
             <ResponsiveContainer width="100%" height={160}>
               <ScatterChart margin={{ top: 8, right: 12, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                 <XAxis
                   dataKey="idx"
                   type="number"
@@ -869,7 +946,7 @@ function Dashboard() {
                 )}
                 <Scatter
                   data={monthSeries.filter((d) => d.calls > 0)}
-                  fill="hsl(var(--primary))"
+                  fill="var(--primary)"
                   fillOpacity={0.75}
                   cursor="pointer"
                   onClick={(d: { date?: string }) => {
@@ -893,7 +970,7 @@ function Dashboard() {
               <>
                 <ResponsiveContainer width="100%" height={160}>
                   <BarChart data={dowSeries} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
-                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
                     <XAxis dataKey="label" tick={{ fontSize: 10 }} />
                     <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
                     <Tooltip contentStyle={{ fontSize: 11 }} />
