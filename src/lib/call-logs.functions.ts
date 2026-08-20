@@ -239,34 +239,42 @@ Extract when discussed:
 - key_points (3-6 short bullets)
 - detected_date: if the notes clearly mention when the call happened (e.g. "called 3/12/2025", "yesterday's call on Feb 4"), return ISO YYYY-MM-DD. Otherwise null. Do NOT guess.
 
-follow_up_needed rules — be STRICT. Set true ONLY when:
-- The call was escalated to a branch / manager / office and someone must call the customer back later, OR
-- The customer explicitly asked to be called back at a later time, OR
-- The notes explicitly state a specific pending action tied to this account in the near future.
+follow_up_needed rules — be VERY STRICT. A follow-up is a REMINDER FOR THE AGENT, nothing else.
+Set true ONLY when one of these two things is true:
+1. The agent EXPLICITLY stated in the notes (usually in the Resolution / Result / Action Taken
+   section) that THEY will reach back out to the customer — e.g. "will call back Monday",
+   "I'll follow up after the service", "need to follow up on this", "will reach out once billing
+   confirms". The words must be the agent's own committed action.
+2. An agreement / paperwork was SENT but the notes do NOT confirm it was signed or accepted on the
+   call ("sent the agreement, waiting on signature", "emailed the e-sign", "pending signature").
 
-Set follow_up_needed = false for ALL of these (they are normal work, not follow-ups):
-- Applying a coupon / discount / credit
-- Making a price change or resign
-- Saving a customer with a standard offer
-- Closing an account
-- Sending a lead to Inside Sales (unless the notes also say to personally call back)
-- Any completed action
+Set follow_up_needed = false for EVERYTHING else, including:
+- Escalations to a branch, field manager, CEM, or another department (that work belongs to them)
+- The customer saying THEY will call back, or "will think about it"
+- Normal reschedules, re-services, pending cancels, back-on-schedule work
+- Applying a coupon / discount / credit, price changes, completed resigns, saves, closes
+- Sending a lead to Inside Sales
+- Any action already completed on the call
+Never infer a follow-up from a copilot-generated Summary section or from an implied next step —
+only from an explicit agent statement or an unsigned sent agreement.
 
-If follow_up_needed is false, follow_up_notes must be null.
+If follow_up_needed is false, follow_up_notes must be null. When true, follow_up_notes is one short
+line naming exactly what the agent promised to do.
 
-THEMES — WHY the customer called / why they are leaving (voice of customer):
-Separately from the outcome, return every applicable theme so recurring problems can be counted
-across calls. Use ONLY these theme keys:
+CANCELLATION / CALL REASONS (voice of customer):
+Separately from the outcome, return every applicable reason so recurring problems can be counted
+across calls. Use ONLY these reason keys:
 ${Object.entries(THEME_META).map(([k, v]) => `- ${k}: ${v.hint}`).join("\n")}
-For each theme return:
+For each reason return:
 - severity: "mentioned" (stated in passing), "frustrated" (clearly upset about it), or
   "cancel_driver" (this is the reason they want to cancel / did cancel).
-- is_cancel_driver: true only when this theme is the stated reason for cancelling or wanting to.
-- quote: a SHORT verbatim phrase from the notes that proves the theme (max ~25 words). Never invent.
+- is_cancel_driver: true only when this reason is the stated reason for cancelling or wanting to.
+- quote: a SHORT verbatim phrase from the notes that proves it (max ~25 words). Never invent.
 - entity_type + entity_name when the notes name a person, branch, route, or plan tied to the
   complaint (e.g. tech "Jose", "Kansas East" route). Leave both null when nothing is named.
-Themes are about the customer's experience and reasons, NOT about the outcome. A call can have
-zero themes (return []) — do not force one. Do not invent a theme from an agent action.
+Reasons are about the customer's experience and motives, NOT about the outcome. A call can have
+zero reasons (return []) — do not force one. Do not invent a reason from an agent action.
+
 
 Return JSON matching the schema exactly. Use null for missing text; 0 for coupon_amount when no discount; false for follow_up_needed when nothing is truly pending.`;
 
@@ -314,14 +322,26 @@ function mergeHeuristics(a: Analysis, notes: string): Analysis {
   for (const t of detectThemes(notes)) {
     if (!themes.some((m) => m.theme === t.theme)) themes.push(t);
   }
+  // Follow-ups are reminders for the agent only: keep the model's flag when the notes actually
+  // prove an agent commitment (or an unsigned sent agreement), otherwise drop it.
+  const detected = detectFollowUp(notes);
+  const modelClaimsFollowUp = a.follow_up_needed ?? false;
+  const modelNote = a.follow_up_notes ?? "";
+  const modelProof =
+    modelClaimsFollowUp &&
+    /\b(follow ?up|call (them|him|her|back)|reach (back )?out|signature|unsigned|not signed|remind)\b/i.test(modelNote);
+  const followUpNeeded = detected.needed || modelProof;
   return {
     ...a,
     themes,
     categories: real.length > 0 ? real : merged,
     category: (real.length > 0 ? real : merged)[0],
+    follow_up_needed: followUpNeeded,
+    follow_up_notes: followUpNeeded ? (modelNote.trim() || detected.note) : null,
     needs_review: real.length === 0 && keywordCats.length === 0,
   };
 }
+
 
 // Last-resort local parser so a call ALWAYS gets logged even if the model is unavailable.
 const SERVICE_MAP: [RegExp, string][] = [
@@ -417,12 +437,34 @@ function keywordCategories(notes: string): { cats: Analysis["category"][]; match
   return { cats, matched };
 }
 
+// A follow-up is a reminder for the AGENT. Only an explicit agent commitment to reach back out,
+// or an agreement sent without a confirmed signature, counts.
+const AGENT_FOLLOW_UP =
+  /\b(i(?:'| a|’a)?m? ?(?:will|'ll|ll)? ?(?:need to )?(?:follow(?:ing)? ?up|reach (?:back )?out|call (?:them|him|her|back|the cx))|will (?:follow ?up|reach (?:back )?out|call (?:them|him|her|the cx|back))|need(?:s|ed)? to follow ?up|follow ?up (?:with|on|needed|required|next|tomorrow|monday|tuesday|wednesday|thursday|friday|after|once|when)|following up (?:with|on) (?:them|him|her|the cx)|set (?:a )?reminder|circle back|check back (?:with|on))\b/i;
+const AGREEMENT_SENT = /\b(sent|send(ing)?|email(ed|ing)?|texted|e-?sign\w*)\b[^.!?\n]{0,60}\b(agreement|contract|paperwork|docusign|e-?sign\w*)\b|\b(agreement|contract|paperwork)\b[^.!?\n]{0,40}\b(sent|emailed|texted|out for signature)\b/i;
+const SIGNED_CONFIRMED =
+  /\b(signed|e-?sign(ed|ature)? (complete|done|received|back)|agreement (was )?signed|accepted (the )?(new )?agreement|came back signed)\b/i;
+
+function detectFollowUp(notes: string): { needed: boolean; note: string | null } {
+  const sentences = notes
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const explicit = sentences.find((s) => AGENT_FOLLOW_UP.test(s));
+  if (explicit) return { needed: true, note: explicit.slice(0, 200) };
+  if (AGREEMENT_SENT.test(notes) && !SIGNED_CONFIRMED.test(notes)) {
+    return { needed: true, note: "Agreement sent — signature not confirmed on the call." };
+  }
+  return { needed: false, note: null };
+}
+
 function heuristicExtract(notes: string): Analysis {
   const { cats: found, matched } = keywordCategories(notes);
   const cats: Analysis["category"][] = matched ? found : ["inquiry"];
   const id = notes.match(/\b(\d{6,9})\b/)?.[1] ?? null;
   const price = notes.match(/\$?\s?(\d{2,4}(?:\.\d{2})?)\s*(?:\/|per)?\s*(?:service|svc)?/i)?.[1];
   const service = SERVICE_MAP.find(([re]) => re.test(notes))?.[1] ?? null;
+  const followUp = detectFollowUp(notes);
 
   return AnalysisSchema.parse({
     categories: cats,
@@ -433,10 +475,13 @@ function heuristicExtract(notes: string): Analysis {
     summary: notes.slice(0, 400),
     key_points: [],
     themes: detectThemes(notes),
+    follow_up_needed: followUp.needed,
+    follow_up_notes: followUp.note,
     // Nothing explicit matched — ask the user to confirm the tags.
     needs_review: !matched,
   });
 }
+
 
 function normalize(a: Analysis): Analysis {
   const raw = Array.isArray(a.categories) && a.categories.length > 0 ? a.categories : [a.category];

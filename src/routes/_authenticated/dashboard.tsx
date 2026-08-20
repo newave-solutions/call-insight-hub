@@ -92,6 +92,7 @@ import {
   CreditCard,
   UserCog,
   AlertTriangle,
+  Bug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -102,6 +103,7 @@ import {
 } from "@/lib/role-policy";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import pestMotif from "@/assets/pest-motif.jpg";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   component: Dashboard,
@@ -491,6 +493,104 @@ function Dashboard() {
     [monthSeries],
   );
 
+  // ONE DOT PER CALL: x = day (index over the last 30 days), y = the call's position in that day,
+  // so every single logged call is its own visible point instead of collapsing onto a daily total.
+  const callPoints = useMemo(() => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - 29);
+    const points: {
+      id: string;
+      idx: number;
+      seq: number;
+      date: string;
+      dayLabel: string;
+      timeLabel: string;
+      cat: Category;
+      fill: string;
+      customer: string;
+    }[] = [];
+    const seqByDay = new Map<string, number>();
+    const ordered = [...logs].sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    );
+    for (const l of ordered) {
+      const day = new Date(l.call_date ?? l.created_at);
+      const dayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+      const idx = Math.round((dayStart.getTime() - start.getTime()) / 86400000);
+      if (idx < 0 || idx > 29) continue;
+      const key = toDayKey(dayStart);
+      const seq = (seqByDay.get(key) ?? 0) + 1;
+      seqByDay.set(key, seq);
+      const clock = new Date(l.created_at);
+      const cat = (logCategories(l)[0] ?? "other") as Category;
+      points.push({
+        id: l.id,
+        idx,
+        seq,
+        date: key,
+        dayLabel: dayStart.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+        timeLabel: clock.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
+        cat,
+        fill: CATEGORY_META[cat]?.hex ?? CATEGORY_META.other.hex,
+        customer: l.customer_name ?? l.customer_id ?? "Unknown",
+      });
+    }
+    return points;
+  }, [logs]);
+
+
+  // Dots grouped by outcome so each outcome becomes its own colored Scatter series.
+  const callPointSeries = useMemo(() => {
+    const groups = new Map<Category, typeof callPoints>();
+    for (const p of callPoints) {
+      const arr = groups.get(p.cat) ?? [];
+      arr.push(p);
+      groups.set(p.cat, arr);
+    }
+    return Array.from(groups.entries()).sort((a, b) => b[1].length - a[1].length);
+  }, [callPoints]);
+
+  // Month-to-date retention performance against the 30% floor we're held to.
+  const mtd = useMemo(() => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(1);
+    const t = {
+      saved: 0, closed: 0, resign: 0, reactivation: 0, lead: 0,
+      cancelPending: 0, pendingCancel: 0,
+      reschedule: 0, reservice: 0, payment: 0, billing: 0, refund: 0,
+      coupons: 0, couponCount: 0, payments: 0, refunds: 0, calls: 0,
+    };
+    for (const l of logs) {
+      const d = new Date(l.call_date ?? l.created_at);
+      if (d < start) continue;
+      t.calls += 1;
+      for (const c of logCategories(l)) {
+        if (c === "saved") t.saved += 1;
+        else if (c === "closed") t.closed += 1;
+        else if (c === "resign") t.resign += 1;
+        else if (c === "reactivation") t.reactivation += 1;
+        else if (c === "lead") t.lead += 1;
+        else if (c === "cancel_pending") t.cancelPending += 1;
+        else if (c === "pending_cancel") t.pendingCancel += 1;
+        else if (c === "reschedule") t.reschedule += 1;
+        else if (c === "reservice") t.reservice += 1;
+        else if (c === "payment") t.payment += 1;
+        else if (c === "billing_update") t.billing += 1;
+        else if (c === "refund") t.refund += 1;
+      }
+      if (l.coupon_amount) t.coupons += Number(l.coupon_amount);
+      if (l.coupon || l.coupon_amount) t.couponCount += 1;
+      if (l.payment_amount) t.payments += Number(l.payment_amount);
+      if (l.refund_amount) t.refunds += Number(l.refund_amount);
+    }
+    const attempts = t.saved + t.resign + t.reactivation + t.closed;
+    const rate = attempts ? Math.round(((t.saved + t.resign + t.reactivation) / attempts) * 100) : 0;
+    return { ...t, attempts, rate };
+  }, [logs]);
+
+
   // Which weekdays produce wins vs. losses over the last 30 days.
   const dowSeries = useMemo(() => {
     const labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -602,17 +702,34 @@ function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur">
+    <div className="console-grid relative min-h-screen">
+      {/* Pest-control motif watermark anchored to the bottom of the console */}
+      <img
+        src={pestMotif}
+        alt=""
+        aria-hidden="true"
+        loading="lazy"
+        width={1536}
+        height={768}
+        className="pointer-events-none fixed inset-x-0 bottom-0 -z-10 h-[42vh] w-full select-none object-cover opacity-[0.16] mix-blend-luminosity"
+      />
+      <header className="sticky top-0 z-10 border-b border-border/60 bg-[color:var(--brand-deep)]/85 backdrop-blur-md">
         <div className="mx-auto grid max-w-[1400px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-2.5 sm:px-6">
-          <div className="flex min-w-0 items-center gap-2">
-            <div className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground">
-              <PhoneCall className="h-3.5 w-3.5" />
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground shadow-md shadow-primary/25">
+              <Bug className="h-4 w-4" />
             </div>
-            <span className="truncate text-sm font-semibold tracking-tight">CallInsight</span>
-            <span className="ml-2 hidden text-xs text-muted-foreground sm:inline">
-              {ROLE_DEFINITIONS[role].tagline}
-            </span>
+            <div className="min-w-0 leading-tight">
+              <div className="flex items-baseline gap-1.5">
+                <span className="font-display truncate text-[15px] font-semibold tracking-tight">Saela</span>
+                <span className="truncate text-[11px] uppercase tracking-[0.22em] text-[color:var(--signal)]">
+                  Retention Console
+                </span>
+              </div>
+              <span className="hidden truncate text-[11px] text-muted-foreground sm:block">
+                {ROLE_DEFINITIONS[role].tagline}
+              </span>
+            </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <RoleSwitcher
@@ -620,8 +737,8 @@ function Dashboard() {
               onChange={(r) => roleMut.mutate(r)}
               saving={roleMut.isPending}
             />
-            <span className="hidden items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground sm:inline-flex">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> live
+            <span className="hidden items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] text-primary sm:inline-flex">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" /> live
             </span>
             <Button variant="ghost" size="sm" onClick={handleSignOut}>
               <LogOut className="h-4 w-4 sm:mr-1.5" />
@@ -629,9 +746,11 @@ function Dashboard() {
             </Button>
           </div>
         </div>
+        <div className="brand-rule h-px w-full" />
       </header>
 
       <main className="mx-auto max-w-[1400px] px-4 py-4 sm:px-6">
+
         {/* KPI strip — the outcomes that matter for the active role */}
         <section className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
           {KPI_BY_ROLE[role].map((c) => (
@@ -664,8 +783,8 @@ function Dashboard() {
         <CommissionStrip role={role} stats={stats} />
 
         {/* Composer + charts */}
-        <section className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-          <div className="rounded-xl border bg-card p-3 shadow-sm">
+        <section className="mt-4 grid items-start gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+          <div className="panel rounded-xl p-3 shadow-lg shadow-black/20">
             <div className="mb-1.5 flex items-center justify-between">
               <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 <Sparkles className="h-3.5 w-3.5 text-primary" /> Log a call
@@ -756,7 +875,7 @@ function Dashboard() {
               <ChartCard title="Retention outcomes (14d)">
                 <ResponsiveContainer width="100%" height={120}>
                   <BarChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
-                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
                     <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
                     <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
                     <Tooltip contentStyle={{ fontSize: 11 }} />
@@ -771,7 +890,7 @@ function Dashboard() {
               <ChartCard title="Payments vs refunds $ / day (14d)">
                 <ResponsiveContainer width="100%" height={120}>
                   <BarChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
-                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
                     <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
                     <YAxis tick={{ fontSize: 10 }} width={28} />
                     <Tooltip contentStyle={{ fontSize: 11 }} />
@@ -803,88 +922,90 @@ function Dashboard() {
               )}
             </ChartCard>
 
-            <ChartCard title="Discount $ / day (14d)">
-              <ResponsiveContainer width="100%" height={120}>
-                <LineChart data={timeseries} margin={{ top: 5, right: 4, left: -24, bottom: 0 }}>
-                  <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={2} />
-                  <YAxis tick={{ fontSize: 10 }} width={28} />
-                  <Tooltip contentStyle={{ fontSize: 11 }} />
-                  <Line type="monotone" dataKey="coupons" stroke="#a855f7" strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
-              <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
-                <span className="flex items-center gap-1.5"><Ticket className="h-3 w-3" /> Coupons used: {stats.couponsUsed}</span>
-                <span>Total: ${stats.couponTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-              </div>
-            </ChartCard>
+            {/* Month-to-date scoreboard: the 30% retention floor, or the CES workload board */}
+            {role === "cem" ? (
+              <RetentionGoalCard mtd={mtd} followUps={stats.followUps} />
+            ) : (
+              <ServiceBoardCard mtd={mtd} followUps={stats.followUps} />
+            )}
 
-            <ChartCard title="Follow-ups">
-              <div className="flex h-[120px] flex-col items-center justify-center gap-1">
-                <BellRing className="h-5 w-5 text-amber-500" />
-                <div className="text-3xl font-semibold tabular-nums">{stats.followUps}</div>
-                <div className="text-[11px] text-muted-foreground">calls need follow-up</div>
-              </div>
-            </ChartCard>
+            <MoneyBoardCard mtd={mtd} role={role} />
+
           </div>
         </section>
 
         {/* Monthly call volume (scatter) + weekday outcome mix */}
         <section className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-          <ChartCard title="Calls logged per day (last 30 days)">
-            <ResponsiveContainer width="100%" height={160}>
-              <ScatterChart margin={{ top: 8, right: 12, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis
-                  dataKey="idx"
-                  type="number"
-                  domain={[0, monthSeries.length - 1]}
-                  ticks={monthSeries.filter((_, i) => i % 4 === 0).map((d) => d.idx)}
-                  tickFormatter={(i: number) => monthSeries[i]?.day ?? ""}
-                  tick={{ fontSize: 10 }}
-                />
-                <YAxis dataKey="calls" tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
-                <ZAxis dataKey="calls" range={[30, 320]} />
-                <Tooltip
-                  contentStyle={{ fontSize: 11 }}
-                  cursor={{ strokeDasharray: "3 3" }}
-                  content={({ active, payload }) => {
-                    if (!active || !payload?.length) return null;
-                    const p = payload[0].payload as (typeof monthSeries)[number];
-                    return (
-                      <div className="rounded-md border bg-popover px-2 py-1 text-[11px] shadow-sm">
-                        <div className="font-medium">{p.day}</div>
-                        <div className="text-muted-foreground">{p.calls} call{p.calls === 1 ? "" : "s"}</div>
-                      </div>
-                    );
-                  }}
-                />
-                {monthAvg > 0 && (
-                  <ReferenceLine
-                    y={monthAvg}
-                    stroke="#a855f7"
-                    strokeDasharray="4 4"
-                    label={{ value: `avg ${monthAvg}`, position: "insideTopRight", fontSize: 9, fill: "#a855f7" }}
+          <ChartCard title="Every call, plotted (last 30 days)">
+            {callPoints.length === 0 ? (
+              <EmptyChart />
+            ) : (
+              <ResponsiveContainer width="100%" height={200}>
+                <ScatterChart margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis
+                    dataKey="idx"
+                    type="number"
+                    domain={[-0.5, 29.5]}
+                    ticks={monthSeries.filter((_, i) => i % 4 === 0).map((d) => d.idx)}
+                    tickFormatter={(i: number) => monthSeries[i]?.day ?? ""}
+                    tick={{ fontSize: 10 }}
                   />
-                )}
-                <Scatter
-                  data={monthSeries.filter((d) => d.calls > 0)}
-                  fill="hsl(var(--primary))"
-                  fillOpacity={0.75}
-                  cursor="pointer"
-                  onClick={(d: { date?: string }) => {
-                    if (d?.date) setDayFilter(new Date(`${d.date}T00:00:00`));
-                  }}
-                />
-              </ScatterChart>
-            </ResponsiveContainer>
+                  <YAxis
+                    dataKey="seq"
+                    type="number"
+                    domain={[0, (max: number) => Math.max(4, max + 1)]}
+                    allowDecimals={false}
+                    tick={{ fontSize: 10 }}
+                    width={26}
+                    label={{ value: "call #", angle: -90, position: "insideLeft", fontSize: 9, fill: "var(--muted-foreground)" }}
+                  />
+
+                  <ZAxis range={[46, 46]} />
+                  <Tooltip
+                    cursor={{ strokeDasharray: "3 3" }}
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null;
+                      const p = payload[0].payload as (typeof callPoints)[number];
+                      return (
+                        <div className="rounded-md border bg-popover px-2 py-1 text-[11px] shadow-md">
+                          <div className="font-medium">{p.customer}</div>
+                          <div className="text-muted-foreground">
+                            {p.dayLabel} · {p.timeLabel}
+                          </div>
+                          <div style={{ color: p.fill }}>{CATEGORY_META[p.cat].label}</div>
+                        </div>
+                      );
+                    }}
+                  />
+                  {callPointSeries.map(([cat, pts]) => (
+                    <Scatter
+                      key={cat}
+                      name={CATEGORY_META[cat].label}
+                      data={pts}
+                      fill={CATEGORY_META[cat].hex}
+                      fillOpacity={0.85}
+                      stroke="var(--background)"
+                      strokeWidth={1}
+                      cursor="pointer"
+                      onClick={(d: { id?: string }) => {
+                        if (d?.id) setSelectedId(d.id);
+                      }}
+                    />
+                  ))}
+                </ScatterChart>
+              </ResponsiveContainer>
+            )}
+            <Legend items={callPointSeries.slice(0, 7).map(([c]) => [CATEGORY_META[c].label, CATEGORY_META[c].hex])} />
             <div className="mt-1 flex flex-wrap items-center gap-x-3 text-[10px] text-muted-foreground">
-              <span>Click a dot to open that day</span>
+              <span>One dot = one call · click a dot to open it</span>
               <span>· {monthTotal} calls / 30 days</span>
-              {bestDay && <span>· busiest {bestDay.day} ({bestDay.calls})</span>}
+              {monthAvg > 0 && <span>· {monthAvg}/active day</span>}
+              {bestDay && bestDay.calls > 0 && <span>· busiest {bestDay.day} ({bestDay.calls})</span>}
               {activeDays > 0 && <span>· {activeDays} active days</span>}
             </div>
           </ChartCard>
+
 
           <ChartCard title="Outcome mix by weekday (30d)">
             {dowSeries.every((d) => d.total === 0) ? (
@@ -893,7 +1014,7 @@ function Dashboard() {
               <>
                 <ResponsiveContainer width="100%" height={160}>
                   <BarChart data={dowSeries} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
-                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
                     <XAxis dataKey="label" tick={{ fontSize: 10 }} />
                     <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
                     <Tooltip contentStyle={{ fontSize: 11 }} />
@@ -942,7 +1063,7 @@ function Dashboard() {
 
         {/* Call log — one day at a time */}
         <section className="mt-3">
-          <div className="rounded-xl border bg-card shadow-sm">
+          <div className="panel rounded-xl shadow-lg shadow-black/20">
             <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
               <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {dayFilter ? (isToday(dayFilter) ? "Today's calls" : format(dayFilter, "EEE, MMM d")) : "All calls"}
@@ -1434,12 +1555,135 @@ function AuthorityBadge({
 
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border bg-card p-3 shadow-sm">
-      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</div>
+    <div className="panel rounded-xl p-3 shadow-lg shadow-black/20">
+      <div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        <span className="h-2 w-2 rounded-sm bg-primary/70" />
+        {title}
+      </div>
       {children}
     </div>
   );
 }
+
+type Mtd = {
+  saved: number; closed: number; resign: number; reactivation: number; lead: number;
+  cancelPending: number; pendingCancel: number;
+  reschedule: number; reservice: number; payment: number; billing: number; refund: number;
+  coupons: number; couponCount: number; payments: number; refunds: number; calls: number;
+  attempts: number; rate: number;
+};
+
+const RETENTION_TARGET = 30;
+
+/** Month-to-date retention rate against the 30% floor, plus the outcome tallies behind it. */
+function RetentionGoalCard({ mtd, followUps }: { mtd: Mtd; followUps: number }) {
+  const pct = Math.min(100, mtd.rate);
+  const onTrack = mtd.rate >= RETENTION_TARGET;
+  const ring = `conic-gradient(${onTrack ? "var(--primary)" : "var(--signal)"} ${pct * 3.6}deg, oklch(1 0 0 / 0.08) ${pct * 3.6}deg)`;
+  return (
+    <ChartCard title={`Retention · month to date (goal ${RETENTION_TARGET}%)`}>
+      <div className="flex h-[120px] items-center gap-3">
+        <div className="relative grid h-[92px] w-[92px] shrink-0 place-items-center rounded-full" style={{ background: ring }}>
+          <div className="grid h-[70px] w-[70px] place-items-center rounded-full bg-card">
+            <span className="font-display text-xl font-semibold tabular-nums">{mtd.rate}%</span>
+          </div>
+        </div>
+        <div className="grid min-w-0 flex-1 grid-cols-2 gap-x-2 gap-y-1 text-[11px]">
+          <Tally label="Saves" value={mtd.saved} hex={CATEGORY_META.saved.hex} />
+          <Tally label="Resigns" value={mtd.resign} hex={CATEGORY_META.resign.hex} />
+          <Tally label="Reactivations" value={mtd.reactivation} hex={CATEGORY_META.reactivation.hex} />
+          <Tally label="Closed / frozen" value={mtd.closed} hex={CATEGORY_META.closed.hex} />
+          <Tally label="Cancel pending" value={mtd.cancelPending} hex={CATEGORY_META.cancel_pending.hex} />
+          <Tally label="Follow-ups" value={followUps} hex={CATEGORY_META.lead.hex} />
+        </div>
+      </div>
+      <div className={cn("mt-1 text-[10px]", onTrack ? "text-primary" : "text-[color:var(--signal)]")}>
+        {mtd.attempts === 0
+          ? "No retention decisions logged this month yet."
+          : onTrack
+            ? `On track — ${mtd.rate}% of ${mtd.attempts} decisions retained.`
+            : `${RETENTION_TARGET - mtd.rate} pts below the floor across ${mtd.attempts} decisions.`}
+      </div>
+    </ChartCard>
+  );
+}
+
+/** CES workload board — the outcomes a service specialist owns. */
+function ServiceBoardCard({ mtd, followUps }: { mtd: Mtd; followUps: number }) {
+  return (
+    <ChartCard title="Service board · month to date">
+      <div className="grid h-[120px] grid-cols-2 content-center gap-x-3 gap-y-1.5 text-[11px]">
+        <Tally label="Reschedules" value={mtd.reschedule} hex={CATEGORY_META.reschedule.hex} />
+        <Tally label="Re-services" value={mtd.reservice} hex={CATEGORY_META.reservice.hex} />
+        <Tally label="Leads sent" value={mtd.lead} hex={CATEGORY_META.lead.hex} />
+        <Tally label="Billing updates" value={mtd.billing} hex={CATEGORY_META.billing_update.hex} />
+        <Tally label="Payments taken" value={mtd.payment} hex={CATEGORY_META.payment.hex} />
+        <Tally label="Follow-ups" value={followUps} hex={CATEGORY_META.escalation.hex} />
+      </div>
+      <div className="mt-1 text-[10px] text-muted-foreground">{mtd.calls} calls logged this month</div>
+    </ChartCard>
+  );
+}
+
+/** Money board — coupons given, payments collected, refunds issued. */
+function MoneyBoardCard({ mtd, role }: { mtd: Mtd; role: Role }) {
+  const money = (n: number) => `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  const net = mtd.payments - mtd.refunds - mtd.coupons;
+  return (
+    <ChartCard title="Money board · month to date">
+      <div className="flex h-[120px] flex-col justify-center gap-2">
+        <MoneyRow icon={Ticket} label={`Coupons given (${mtd.couponCount})`} value={money(mtd.coupons)} tone="signal" />
+        <MoneyRow icon={Wallet} label="Payments collected" value={money(mtd.payments)} tone="primary" />
+        <MoneyRow icon={Undo2} label="Refunds issued" value={money(mtd.refunds)} tone="destructive" />
+        <div className="mt-0.5 flex items-center justify-between border-t pt-1.5 text-[11px]">
+          <span className="text-muted-foreground">Net collected</span>
+          <span className={cn("font-semibold tabular-nums", net >= 0 ? "text-primary" : "text-destructive")}>{money(net)}</span>
+        </div>
+      </div>
+      <div className="mt-1 text-[10px] text-muted-foreground">
+        {role === "cem" ? "Discount spend vs. dollars recovered" : "Collections and credits you handled"}
+      </div>
+    </ChartCard>
+  );
+}
+
+function Tally({ label, value, hex }: { label: string; value: number; hex: string }) {
+  return (
+    <div className="flex items-center gap-1.5 truncate">
+      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: hex }} />
+      <span className="truncate text-muted-foreground">{label}</span>
+      <span className="ml-auto font-semibold tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+function MoneyRow({
+  icon: Icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: typeof DollarSign;
+  label: string;
+  value: string;
+  tone: "primary" | "signal" | "destructive";
+}) {
+  return (
+    <div className="flex items-center gap-2 text-[11px]">
+      <Icon
+        className={cn(
+          "h-3.5 w-3.5",
+          tone === "primary" && "text-primary",
+          tone === "signal" && "text-[color:var(--signal)]",
+          tone === "destructive" && "text-destructive",
+        )}
+      />
+      <span className="truncate text-muted-foreground">{label}</span>
+      <span className="ml-auto font-semibold tabular-nums">{value}</span>
+    </div>
+  );
+}
+
 
 /** Rotating daily-briefing highlights with a cross-fade transition. */
 function DailyBriefing({ content, loading, empty }: { content: string; loading: boolean; empty: boolean }) {
@@ -1468,7 +1712,7 @@ function DailyBriefing({ content, loading, empty }: { content: string; loading: 
 
   return (
     <div
-      className="rounded-xl border bg-card p-3 shadow-sm"
+      className="panel rounded-xl p-3 shadow-lg shadow-black/20"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
     >
@@ -2630,7 +2874,7 @@ function Watchlist({
   const palette = ["#f43f5e", "#f97316", "#f59e0b", "#8b5cf6", "#0ea5e9", "#10b981"];
 
   return (
-    <div className="rounded-xl border bg-card shadow-sm">
+    <div className="panel rounded-xl shadow-lg shadow-black/20">
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
         <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">

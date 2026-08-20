@@ -59,77 +59,68 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  /* Saela brand extensions */
+  --color-brand: var(--brand);
+  --color-brand-deep: var(--brand-deep);
+  --color-brand-cream: var(--brand-cream);
+  --color-signal: var(--signal);
+  --color-signal-foreground: var(--signal-foreground);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
+  --font-sans: "Inter Tight", ui-sans-serif, system-ui, sans-serif;
 }
 
+/*
+ * Saela Pest Control control-room theme.
+ * Deep forest green surfaces, cream type, orange signal accent.
+ */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.129 0.042 264.695);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.129 0.042 264.695);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.129 0.042 264.695);
-  --primary: oklch(0.208 0.042 265.755);
-  --primary-foreground: oklch(0.984 0.003 247.858);
-  --secondary: oklch(0.968 0.007 247.896);
-  --secondary-foreground: oklch(0.208 0.042 265.755);
-  --muted: oklch(0.968 0.007 247.896);
-  --muted-foreground: oklch(0.554 0.046 257.417);
-  --accent: oklch(0.968 0.007 247.896);
-  --accent-foreground: oklch(0.208 0.042 265.755);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.984 0.003 247.858);
-  --border: oklch(0.929 0.013 255.508);
-  --input: oklch(0.929 0.013 255.508);
-  --ring: oklch(0.704 0.04 256.788);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.984 0.003 247.858);
-  --sidebar-foreground: oklch(0.129 0.042 264.695);
-  --sidebar-primary: oklch(0.208 0.042 265.755);
-  --sidebar-primary-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-accent: oklch(0.968 0.007 247.896);
-  --sidebar-accent-foreground: oklch(0.208 0.042 265.755);
-  --sidebar-border: oklch(0.929 0.013 255.508);
-  --sidebar-ring: oklch(0.704 0.04 256.788);
+  --radius: 0.75rem;
+  --background: oklch(0.219 0.032 162.5);
+  --foreground: oklch(0.953 0.012 92);
+  --card: oklch(0.262 0.036 163);
+  --card-foreground: oklch(0.953 0.012 92);
+  --popover: oklch(0.243 0.034 163);
+  --popover-foreground: oklch(0.953 0.012 92);
+  --primary: oklch(0.72 0.16 152);
+  --primary-foreground: oklch(0.19 0.03 163);
+  --secondary: oklch(0.318 0.038 163);
+  --secondary-foreground: oklch(0.953 0.012 92);
+  --muted: oklch(0.305 0.033 163);
+  --muted-foreground: oklch(0.762 0.026 140);
+  --accent: oklch(0.345 0.045 163);
+  --accent-foreground: oklch(0.966 0.012 92);
+  --destructive: oklch(0.6 0.2 22);
+  --destructive-foreground: oklch(0.98 0.005 92);
+  --border: oklch(0.372 0.036 163);
+  --input: oklch(0.34 0.034 163);
+  --ring: oklch(0.72 0.16 152);
+  --surface: oklch(0.243 0.034 163);
+  --surface-raised: oklch(0.295 0.038 163);
+  --brand: oklch(0.42 0.075 160);
+  --brand-deep: oklch(0.17 0.026 163);
+  --brand-cream: oklch(0.953 0.012 92);
+  --signal: oklch(0.735 0.155 61);
+  --signal-foreground: oklch(0.2 0.03 60);
+  --chart-1: oklch(0.75 0.17 152);
+  --chart-2: oklch(0.735 0.155 61);
+  --chart-3: oklch(0.7 0.12 205);
+  --chart-4: oklch(0.66 0.19 20);
+  --chart-5: oklch(0.8 0.14 95);
+  --sidebar: oklch(0.196 0.03 163);
+  --sidebar-foreground: oklch(0.953 0.012 92);
+  --sidebar-primary: oklch(0.72 0.16 152);
+  --sidebar-primary-foreground: oklch(0.19 0.03 163);
+  --sidebar-accent: oklch(0.295 0.038 163);
+  --sidebar-accent-foreground: oklch(0.966 0.012 92);
+  --sidebar-border: oklch(0.372 0.036 163);
+  --sidebar-ring: oklch(0.72 0.16 152);
 }
 
+/* The control room is dark by default; .dark keeps the same tokens. */
 .dark {
-  --background: oklch(0.129 0.042 264.695);
-  --foreground: oklch(0.984 0.003 247.858);
-  --card: oklch(0.208 0.042 265.755);
-  --card-foreground: oklch(0.984 0.003 247.858);
-  --popover: oklch(0.208 0.042 265.755);
-  --popover-foreground: oklch(0.984 0.003 247.858);
-  --primary: oklch(0.929 0.013 255.508);
-  --primary-foreground: oklch(0.208 0.042 265.755);
-  --secondary: oklch(0.279 0.041 260.031);
-  --secondary-foreground: oklch(0.984 0.003 247.858);
-  --muted: oklch(0.279 0.041 260.031);
-  --muted-foreground: oklch(0.704 0.04 256.788);
-  --accent: oklch(0.279 0.041 260.031);
-  --accent-foreground: oklch(0.984 0.003 247.858);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.984 0.003 247.858);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.551 0.027 264.364);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.208 0.042 265.755);
-  --sidebar-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-accent: oklch(0.279 0.041 260.031);
-  --sidebar-accent-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.551 0.027 264.364);
+  color-scheme: dark;
 }
 
 @layer base {
@@ -140,5 +131,40 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-family: var(--font-sans);
+    /* Layered brand wash: green vignette over the deep base. */
+    background-image:
+      radial-gradient(900px 520px at 12% -8%, oklch(0.42 0.075 160 / 0.5), transparent 70%),
+      radial-gradient(700px 480px at 92% 0%, oklch(0.735 0.155 61 / 0.14), transparent 72%),
+      linear-gradient(180deg, oklch(0.219 0.032 162.5) 0%, oklch(0.185 0.028 163) 100%);
+    background-attachment: fixed;
+  }
+
+  h1,
+  h2,
+  h3,
+  .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
   }
 }
+
+/* Fine grid texture — reads as an operations console rather than a blank page. */
+@utility console-grid {
+  background-image:
+    linear-gradient(oklch(1 0 0 / 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(1 0 0 / 0.035) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+/* Glass panel used for cards across the dashboard. */
+@utility panel {
+  background-color: oklch(0.262 0.036 163 / 0.78);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--color-border);
+}
+
+@utility brand-rule {
+  background-image: linear-gradient(90deg, var(--color-primary), var(--color-signal), transparent);
+}
+
