@@ -1526,12 +1526,135 @@ function AuthorityBadge({
 
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border bg-card p-3 shadow-sm">
-      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</div>
+    <div className="panel rounded-xl p-3 shadow-lg shadow-black/20">
+      <div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        <span className="h-2 w-2 rounded-sm bg-primary/70" />
+        {title}
+      </div>
       {children}
     </div>
   );
 }
+
+type Mtd = {
+  saved: number; closed: number; resign: number; reactivation: number; lead: number;
+  cancelPending: number; pendingCancel: number;
+  reschedule: number; reservice: number; payment: number; billing: number; refund: number;
+  coupons: number; couponCount: number; payments: number; refunds: number; calls: number;
+  attempts: number; rate: number;
+};
+
+const RETENTION_TARGET = 30;
+
+/** Month-to-date retention rate against the 30% floor, plus the outcome tallies behind it. */
+function RetentionGoalCard({ mtd, followUps }: { mtd: Mtd; followUps: number }) {
+  const pct = Math.min(100, mtd.rate);
+  const onTrack = mtd.rate >= RETENTION_TARGET;
+  const ring = `conic-gradient(${onTrack ? "var(--primary)" : "var(--signal)"} ${pct * 3.6}deg, oklch(1 0 0 / 0.08) ${pct * 3.6}deg)`;
+  return (
+    <ChartCard title={`Retention · month to date (goal ${RETENTION_TARGET}%)`}>
+      <div className="flex h-[120px] items-center gap-3">
+        <div className="relative grid h-[92px] w-[92px] shrink-0 place-items-center rounded-full" style={{ background: ring }}>
+          <div className="grid h-[70px] w-[70px] place-items-center rounded-full bg-card">
+            <span className="font-display text-xl font-semibold tabular-nums">{mtd.rate}%</span>
+          </div>
+        </div>
+        <div className="grid min-w-0 flex-1 grid-cols-2 gap-x-2 gap-y-1 text-[11px]">
+          <Tally label="Saves" value={mtd.saved} hex={CATEGORY_META.saved.hex} />
+          <Tally label="Resigns" value={mtd.resign} hex={CATEGORY_META.resign.hex} />
+          <Tally label="Reactivations" value={mtd.reactivation} hex={CATEGORY_META.reactivation.hex} />
+          <Tally label="Closed / frozen" value={mtd.closed} hex={CATEGORY_META.closed.hex} />
+          <Tally label="Cancel pending" value={mtd.cancelPending} hex={CATEGORY_META.cancel_pending.hex} />
+          <Tally label="Follow-ups" value={followUps} hex={CATEGORY_META.lead.hex} />
+        </div>
+      </div>
+      <div className={cn("mt-1 text-[10px]", onTrack ? "text-primary" : "text-[color:var(--signal)]")}>
+        {mtd.attempts === 0
+          ? "No retention decisions logged this month yet."
+          : onTrack
+            ? `On track — ${mtd.rate}% of ${mtd.attempts} decisions retained.`
+            : `${RETENTION_TARGET - mtd.rate} pts below the floor across ${mtd.attempts} decisions.`}
+      </div>
+    </ChartCard>
+  );
+}
+
+/** CES workload board — the outcomes a service specialist owns. */
+function ServiceBoardCard({ mtd, followUps }: { mtd: Mtd; followUps: number }) {
+  return (
+    <ChartCard title="Service board · month to date">
+      <div className="grid h-[120px] grid-cols-2 content-center gap-x-3 gap-y-1.5 text-[11px]">
+        <Tally label="Reschedules" value={mtd.reschedule} hex={CATEGORY_META.reschedule.hex} />
+        <Tally label="Re-services" value={mtd.reservice} hex={CATEGORY_META.reservice.hex} />
+        <Tally label="Leads sent" value={mtd.lead} hex={CATEGORY_META.lead.hex} />
+        <Tally label="Billing updates" value={mtd.billing} hex={CATEGORY_META.billing_update.hex} />
+        <Tally label="Payments taken" value={mtd.payment} hex={CATEGORY_META.payment.hex} />
+        <Tally label="Follow-ups" value={followUps} hex={CATEGORY_META.escalation.hex} />
+      </div>
+      <div className="mt-1 text-[10px] text-muted-foreground">{mtd.calls} calls logged this month</div>
+    </ChartCard>
+  );
+}
+
+/** Money board — coupons given, payments collected, refunds issued. */
+function MoneyBoardCard({ mtd, role }: { mtd: Mtd; role: Role }) {
+  const money = (n: number) => `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  const net = mtd.payments - mtd.refunds - mtd.coupons;
+  return (
+    <ChartCard title="Money board · month to date">
+      <div className="flex h-[120px] flex-col justify-center gap-2">
+        <MoneyRow icon={Ticket} label={`Coupons given (${mtd.couponCount})`} value={money(mtd.coupons)} tone="signal" />
+        <MoneyRow icon={Wallet} label="Payments collected" value={money(mtd.payments)} tone="primary" />
+        <MoneyRow icon={Undo2} label="Refunds issued" value={money(mtd.refunds)} tone="destructive" />
+        <div className="mt-0.5 flex items-center justify-between border-t pt-1.5 text-[11px]">
+          <span className="text-muted-foreground">Net collected</span>
+          <span className={cn("font-semibold tabular-nums", net >= 0 ? "text-primary" : "text-destructive")}>{money(net)}</span>
+        </div>
+      </div>
+      <div className="mt-1 text-[10px] text-muted-foreground">
+        {role === "cem" ? "Discount spend vs. dollars recovered" : "Collections and credits you handled"}
+      </div>
+    </ChartCard>
+  );
+}
+
+function Tally({ label, value, hex }: { label: string; value: number; hex: string }) {
+  return (
+    <div className="flex items-center gap-1.5 truncate">
+      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: hex }} />
+      <span className="truncate text-muted-foreground">{label}</span>
+      <span className="ml-auto font-semibold tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+function MoneyRow({
+  icon: Icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: typeof DollarSign;
+  label: string;
+  value: string;
+  tone: "primary" | "signal" | "destructive";
+}) {
+  return (
+    <div className="flex items-center gap-2 text-[11px]">
+      <Icon
+        className={cn(
+          "h-3.5 w-3.5",
+          tone === "primary" && "text-primary",
+          tone === "signal" && "text-[color:var(--signal)]",
+          tone === "destructive" && "text-destructive",
+        )}
+      />
+      <span className="truncate text-muted-foreground">{label}</span>
+      <span className="ml-auto font-semibold tabular-nums">{value}</span>
+    </div>
+  );
+}
+
 
 /** Rotating daily-briefing highlights with a cross-fade transition. */
 function DailyBriefing({ content, loading, empty }: { content: string; loading: boolean; empty: boolean }) {
