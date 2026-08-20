@@ -908,60 +908,75 @@ function Dashboard() {
 
         {/* Monthly call volume (scatter) + weekday outcome mix */}
         <section className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-          <ChartCard title="Calls logged per day (last 30 days)">
-            <ResponsiveContainer width="100%" height={160}>
-              <ScatterChart margin={{ top: 8, right: 12, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis
-                  dataKey="idx"
-                  type="number"
-                  domain={[0, monthSeries.length - 1]}
-                  ticks={monthSeries.filter((_, i) => i % 4 === 0).map((d) => d.idx)}
-                  tickFormatter={(i: number) => monthSeries[i]?.day ?? ""}
-                  tick={{ fontSize: 10 }}
-                />
-                <YAxis dataKey="calls" tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
-                <ZAxis dataKey="calls" range={[30, 320]} />
-                <Tooltip
-                  contentStyle={{ fontSize: 11 }}
-                  cursor={{ strokeDasharray: "3 3" }}
-                  content={({ active, payload }) => {
-                    if (!active || !payload?.length) return null;
-                    const p = payload[0].payload as (typeof monthSeries)[number];
-                    return (
-                      <div className="rounded-md border bg-popover px-2 py-1 text-[11px] shadow-sm">
-                        <div className="font-medium">{p.day}</div>
-                        <div className="text-muted-foreground">{p.calls} call{p.calls === 1 ? "" : "s"}</div>
-                      </div>
-                    );
-                  }}
-                />
-                {monthAvg > 0 && (
-                  <ReferenceLine
-                    y={monthAvg}
-                    stroke="#a855f7"
-                    strokeDasharray="4 4"
-                    label={{ value: `avg ${monthAvg}`, position: "insideTopRight", fontSize: 9, fill: "#a855f7" }}
+          <ChartCard title="Every call, plotted (last 30 days)">
+            {callPoints.length === 0 ? (
+              <EmptyChart />
+            ) : (
+              <ResponsiveContainer width="100%" height={200}>
+                <ScatterChart margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis
+                    dataKey="idx"
+                    type="number"
+                    domain={[-0.5, 29.5]}
+                    ticks={monthSeries.filter((_, i) => i % 4 === 0).map((d) => d.idx)}
+                    tickFormatter={(i: number) => monthSeries[i]?.day ?? ""}
+                    tick={{ fontSize: 10 }}
                   />
-                )}
-                <Scatter
-                  data={monthSeries.filter((d) => d.calls > 0)}
-                  fill="var(--primary)"
-                  fillOpacity={0.75}
-                  cursor="pointer"
-                  onClick={(d: { date?: string }) => {
-                    if (d?.date) setDayFilter(new Date(`${d.date}T00:00:00`));
-                  }}
-                />
-              </ScatterChart>
-            </ResponsiveContainer>
+                  <YAxis
+                    dataKey="hour"
+                    type="number"
+                    domain={[6, 21]}
+                    ticks={[6, 9, 12, 15, 18, 21]}
+                    tickFormatter={(h: number) => (h === 12 ? "12p" : h > 12 ? `${h - 12}p` : `${h}a`)}
+                    tick={{ fontSize: 10 }}
+                    width={32}
+                  />
+                  <ZAxis range={[46, 46]} />
+                  <Tooltip
+                    cursor={{ strokeDasharray: "3 3" }}
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null;
+                      const p = payload[0].payload as (typeof callPoints)[number];
+                      return (
+                        <div className="rounded-md border bg-popover px-2 py-1 text-[11px] shadow-md">
+                          <div className="font-medium">{p.customer}</div>
+                          <div className="text-muted-foreground">
+                            {p.dayLabel} · {p.timeLabel}
+                          </div>
+                          <div style={{ color: p.fill }}>{CATEGORY_META[p.cat].label}</div>
+                        </div>
+                      );
+                    }}
+                  />
+                  {callPointSeries.map(([cat, pts]) => (
+                    <Scatter
+                      key={cat}
+                      name={CATEGORY_META[cat].label}
+                      data={pts}
+                      fill={CATEGORY_META[cat].hex}
+                      fillOpacity={0.85}
+                      stroke="var(--background)"
+                      strokeWidth={1}
+                      cursor="pointer"
+                      onClick={(d: { id?: string }) => {
+                        if (d?.id) setSelectedId(d.id);
+                      }}
+                    />
+                  ))}
+                </ScatterChart>
+              </ResponsiveContainer>
+            )}
+            <Legend items={callPointSeries.slice(0, 7).map(([c]) => [CATEGORY_META[c].label, CATEGORY_META[c].hex])} />
             <div className="mt-1 flex flex-wrap items-center gap-x-3 text-[10px] text-muted-foreground">
-              <span>Click a dot to open that day</span>
+              <span>One dot = one call · click a dot to open it</span>
               <span>· {monthTotal} calls / 30 days</span>
-              {bestDay && <span>· busiest {bestDay.day} ({bestDay.calls})</span>}
+              {monthAvg > 0 && <span>· {monthAvg}/active day</span>}
+              {bestDay && bestDay.calls > 0 && <span>· busiest {bestDay.day} ({bestDay.calls})</span>}
               {activeDays > 0 && <span>· {activeDays} active days</span>}
             </div>
           </ChartCard>
+
 
           <ChartCard title="Outcome mix by weekday (30d)">
             {dowSeries.every((d) => d.total === 0) ? (
