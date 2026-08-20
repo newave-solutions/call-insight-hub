@@ -33,12 +33,15 @@ New vocabulary (replaces the current theme list): agreement dispute, billing iss
 - Detection patterns and AI extraction are rewritten against this list; recurring-issue alerts and the account/technician signals keep working on the new reasons.
 - Existing calls' old themes are mapped to the closest new reason so history isn't lost (upsell pressure and tech professionalism fold into poor experience; contract confusion into agreement dispute).
 
-## 5. Front end: Saela "deep green control room"
-- Palette: near-black forest ground `#0E2A1B`, panel green `#12402A`, lime accent `#7CD44A`, white type — applied as design tokens so no flat-white surfaces remain.
-- New shell: dark top bar with the Saela wordmark, role switcher and authority badge; panels as translucent glass cards with soft lime glow, thin borders, and subtle grid texture.
-- Background gets generated pest-control imagery — a faint bug/leaf silhouette motif low on the page and a soft canopy gradient behind the header — kept low-contrast so data stays readable.
-- Charts restyled to the palette (lime for wins, muted red for losses, amber for pending), animated counters on the totals boards, and denser type scale so the dashboard reads like a live ops console.
-- Light mode remains available but is retuned green/black rather than plain white.
+## 5. Front end: matched to the real Saela brand
+Pulled from the saelapestcontrol.com screenshot you shared:
+- Palette: Saela deep forest green `#1F3D33` (headings, header/sidebar, panel fills), darker ground `#152A23` for the console surfaces, warm cream `#F2EFE6` for light text/panels, and the brand orange `#E38A2E` as the single call-to-action / alert accent. Green stays the dominant surface color so the flat-white look is gone.
+- Typography follows the site: a warm serif for headings and big metric numbers, clean sans for data and labels.
+- New shell: deep-green top bar carrying the Saela wordmark, role switcher and authority badge; content panels are green-tinted glass cards with cream hairline borders and the orange accent reserved for goals, alerts and primary buttons.
+- Chart colors: green family for wins (saves, resigns, payments), muted brick for losses (closed/frozen), orange for pending/at-risk.
+- Background gets subtle pest-control imagery — a faint bug/leaf silhouette motif low on the page and a soft green gradient behind the header — low-contrast so the data stays readable.
+- Animated metric counters and a denser type scale so it reads like a live retention ops console rather than a form.
+
 
 ## Technical notes
 - `src/styles.css`: new token set (green surfaces, lime accent/glow, gradients, glass shadow) for both themes; charts read tokens, no hardcoded color classes.
