@@ -439,8 +439,14 @@ function keywordCategories(notes: string): { cats: Analysis["category"][]; match
 
 // A follow-up is a reminder for the AGENT. Only an explicit agent commitment to reach back out,
 // or an agreement sent without a confirmed signature, counts.
+const AGENT_SUBJECT = /\b(i|i'?ll|i'?m|we|we'?ll|me)\b/i;
+// Customer-side promises ("cx will call back", "customer said she'll reach out") are NOT follow-ups.
+const CUSTOMER_SUBJECT =
+  /\b(cx|customer|client|cust|he|she|they|homeowner|caller|tenant|wife|husband|spouse)\b[^.!?\n]{0,30}\b(will|'ll|is going to|gonna|said (?:he|she|they)|plans to)\b/i;
+const NEGATED_FOLLOW_UP =
+  /\b(no|not|none|without|doesn'?t|does not|didn'?t|did not|won'?t|will not|nothing)\b[^.!?\n]{0,20}\b(follow ?up|reach (?:back )?out|call ?back|callback|reminder)\b|\b(follow ?up|reach out|callback)\b[^.!?\n]{0,20}\b(not (?:needed|required)|complete[d]?|done|resolved|handled|unnecessary)\b/i;
 const AGENT_FOLLOW_UP =
-  /\b(i(?:'| a|’a)?m? ?(?:will|'ll|ll)? ?(?:need to )?(?:follow(?:ing)? ?up|reach (?:back )?out|call (?:them|him|her|back|the cx))|will (?:follow ?up|reach (?:back )?out|call (?:them|him|her|the cx|back))|need(?:s|ed)? to follow ?up|follow ?up (?:with|on|needed|required|next|tomorrow|monday|tuesday|wednesday|thursday|friday|after|once|when)|following up (?:with|on) (?:them|him|her|the cx)|set (?:a )?reminder|circle back|check back (?:with|on))\b/i;
+  /\b(i(?:'| a|’a)?m? ?(?:will|'ll|ll)? ?(?:need to )?(?:follow(?:ing)? ?up|reach (?:back )?out|call (?:them|him|her|back|the cx))|(?:i|we)(?:'ll| will| am going to| going to)? ?(?:follow ?up|reach (?:back )?out|call (?:them|him|her|the cx|back))|need(?:s|ed)? to follow ?up|follow ?up (?:with|on|needed|required|next|tomorrow|monday|tuesday|wednesday|thursday|friday|after|once|when)|following up (?:with|on) (?:them|him|her|the cx)|set (?:a )?reminder|circle back|check back (?:with|on))\b/i;
 const AGREEMENT_SENT = /\b(sent|send(ing)?|email(ed|ing)?|texted|e-?sign\w*)\b[^.!?\n]{0,60}\b(agreement|contract|paperwork|docusign|e-?sign\w*)\b|\b(agreement|contract|paperwork)\b[^.!?\n]{0,40}\b(sent|emailed|texted|out for signature)\b/i;
 const SIGNED_CONFIRMED =
   /\b(signed|e-?sign(ed|ature)? (complete|done|received|back)|agreement (was )?signed|accepted (the )?(new )?agreement|came back signed)\b/i;
@@ -450,13 +456,20 @@ function detectFollowUp(notes: string): { needed: boolean; note: string | null }
     .split(/(?<=[.!?])\s+|\n+/)
     .map((s) => s.trim())
     .filter(Boolean);
-  const explicit = sentences.find((s) => AGENT_FOLLOW_UP.test(s));
+  const explicit = sentences.find((s) => {
+    if (!AGENT_FOLLOW_UP.test(s)) return false;
+    if (NEGATED_FOLLOW_UP.test(s)) return false;
+    // Only the agent's own commitment counts: skip customer-subject promises.
+    if (CUSTOMER_SUBJECT.test(s) && !AGENT_SUBJECT.test(s)) return false;
+    return true;
+  });
   if (explicit) return { needed: true, note: explicit.slice(0, 200) };
   if (AGREEMENT_SENT.test(notes) && !SIGNED_CONFIRMED.test(notes)) {
     return { needed: true, note: "Agreement sent — signature not confirmed on the call." };
   }
   return { needed: false, note: null };
 }
+
 
 function heuristicExtract(notes: string): Analysis {
   const { cats: found, matched } = keywordCategories(notes);
